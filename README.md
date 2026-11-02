@@ -47,6 +47,17 @@ uv run contoso-aero-ui            # http://127.0.0.1:8010
 
 Ask through the router, or send a question straight to one agent to test it without intent detection. The page shows which agent was picked, the answer, the time spent waiting on rate limits versus model time, and every tool call with its SQL and output. It listens on loopback only, because the process holds the model key.
 
+## Datasets: test set and dev set
+
+| Set | File | Size | Role |
+|---|---|---:|---|
+| Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged with project 2 |
+| Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check the router |
+
+* Prompts and agents are tuned only against the dev set. The test set is never edited to make a run pass.
+* A router fix counts only if the dev probe passes with repeats (`uv run python -m contoso_aero.evaluation.probe --repeat 3`) and the test set does not regress.
+* The dev set calls only intent detection, so a probe run costs a few thousand tokens instead of a full evaluation.
+
 ## Run the evaluation
 
 The shared corpus contains 59 questions: 24 single-agent, 23 multi-agent and 12 unsupported.

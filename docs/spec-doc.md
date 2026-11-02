@@ -150,6 +150,17 @@ Each row records:
 * a reference answer
 * the expected behaviour (`answer` or `refuse`)
 
+### Datasets: test set and dev set
+
+| Set | File | Size | Role |
+|---|---|---:|---|
+| Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged with project 2 |
+| Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check the router |
+
+* Prompts and agents are tuned only against the dev set. The test set is never edited to make a run pass.
+* A router fix counts only if the dev probe passes with repeats (`uv run python -m contoso_aero.evaluation.probe --repeat 3`) and the test set does not regress.
+* The dev set calls only intent detection, so a probe run costs a few thousand tokens instead of a full evaluation.
+
 ### Metrics
 
 **Primary metrics (exact, code-based):**
