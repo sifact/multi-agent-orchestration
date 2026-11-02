@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sqlite3
 from collections.abc import Sequence
 from io import BytesIO
@@ -17,9 +18,12 @@ from contoso_aero.agents import knowledge, production, quality, service, telemet
 from contoso_aero.agents.common import AgentContext
 from contoso_aero.agents.common.sql_tools import run_query
 from contoso_aero.agents.knowledge.search import KnowledgeIndex
+from contoso_aero.agents.production.agent import NOTES as PRODUCTION_NOTES
 from contoso_aero.config import ModelSettings, SettingsError, load_model_settings
+from contoso_aero.data.reference import OPERATORS, PLANTS
 from contoso_aero.llm import ChatCompletionClient, ModelError, ModelResponse, ToolCall
 from contoso_aero.routing import REFUSAL, ROUTES, ask, detect_intent
+from contoso_aero.routing.intent import LABELS, PROMPT
 
 SRC = Path(__file__).parents[1] / "src" / "contoso_aero"
 
@@ -256,6 +260,21 @@ def test_given_missing_settings_when_client_created_then_it_names_the_variables(
         ChatCompletionClient(ModelSettings("http://x", "", "m"))
 
 
+def test_given_model_settings_when_request_is_sent_then_api_key_is_authorization_header() -> None:
+    headers: list[str | None] = []
+
+    def transport(request: Request, timeout: float) -> bytes:
+        headers.append(request.get_header("Authorization"))
+        return reply_body()
+
+    client = ChatCompletionClient(
+        ModelSettings("http://x/v1", "test-key", "model"), transport=transport)
+
+    client.complete([{"role": "user", "content": "hi"}])
+
+    assert headers == ["Bearer test-key"]
+
+
 def test_given_env_file_when_settings_load_then_key_is_hidden_from_repr(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("NL_SQL_BASE_URL", "NL_SQL_API_KEY", "NL_SQL_MODEL"):
@@ -268,6 +287,19 @@ def test_given_env_file_when_settings_load_then_key_is_hidden_from_repr(
     assert settings.api_key == "s3cret" and "s3cret" not in repr(settings)
     with pytest.raises(SettingsError):
         ModelSettings().require_complete()
+
+
+def test_given_intent_prompt_when_labels_checked_then_every_route_label_is_listed() -> None:
+    assert all(re.search(rf"(?m)^- {re.escape(label)}:", PROMPT) for label in LABELS)
+
+
+def test_given_intent_prompt_when_guardrails_checked_then_no_question_ids_or_airlines_are_named() -> None:
+    assert re.search(r"\bQ\d{3}\b", PROMPT) is None
+    assert all(operator.name not in PROMPT for operator in OPERATORS)
+
+
+def test_given_production_notes_when_plant_names_checked_then_all_reference_plants_are_named() -> None:
+    assert all(plant.name in PRODUCTION_NOTES for plant in PLANTS)
 
 
 def test_given_agent_package_when_imports_are_read_then_no_agent_framework_is_used() -> None:
