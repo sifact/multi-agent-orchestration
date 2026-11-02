@@ -1,0 +1,24 @@
+# Raw third-party data stays local; fetch it with the documented source instead of committing it.
+/data/raw/
+# Generated tables include NASA telemetry, so they are rebuilt locally rather than committed.
+/data/generated/
+# Per-run model outputs are local evaluation artifacts and can contain prompt text.
+/data/eval/runs/
+
+# Python build and tool caches
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environment and local secrets
+.venv
+.env
+
+# hve-core RPI working notes (local only)
+.copilot-tracking/
+
+.DS_Store

@@ -1,0 +1,27 @@
+[project]
+name = "contoso-aero"
+version = "0.1.0"
+description = "Contoso Aero Engines assistant: a router-pattern modular monolith baseline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "azure-ai-evaluation==1.18.10",
+    "langgraph>=1.2.18",
+]
+
+[project.scripts]
+contoso-aero = "contoso_aero.cli:main"
+contoso-aero-ui = "contoso_aero.serving.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 100
