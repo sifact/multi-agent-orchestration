@@ -8,6 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 
+from .stats import wilson_interval
+
 
 def render_report(run: dict[str, object]) -> str:
     """Render aggregate metrics and failures without including secrets or full prompts."""
@@ -23,6 +25,9 @@ def render_report(run: dict[str, object]) -> str:
     lines = [
         "# Contoso Aero Engines evaluation report",
         "",
+        ("Rates on fewer than 30 cases are noisy, and differences inside overlapping "
+         "intervals are not evidence of a change."),
+        "",
         f"- Run: `{run.get('run_id', 'unknown')}`",
         f"- Created: `{run.get('created_at', 'unknown')}`",
         f"- Questions: {total}",
@@ -31,11 +36,9 @@ def render_report(run: dict[str, object]) -> str:
         "",
         "| Metric | Result |",
         "|---|---:|",
-        f"| Routing accuracy | {routing / total:.1%} ({routing}/{total}) |",
-        (f"| Answer correctness (answer cases) | {_rate(answer_cases, 'answer_correct')} "
-         f"({answers}/{len(answer_cases)}) |"),
-        (f"| Correct refusals | {_rate(refusal_cases, 'refusal_correct')} "
-         f"({refusals}/{len(refusal_cases)}) |"),
+        f"| Routing accuracy | {_fmt(routing, total)} |",
+        f"| Answer correctness (answer cases) | {_fmt(answers, len(answer_cases))} |",
+        f"| Correct refusals | {_fmt(refusals, len(refusal_cases))} |",
         f"| Mean intent latency | {_mean(cases, 'intent_seconds'):.3f}s |",
         f"| Mean agent latency (called agents) | {_mean([case for case in cases if case['agent_seconds'] > 0], 'agent_seconds'):.3f}s |",
         f"| Mean total latency | {_mean(cases, 'total_seconds'):.3f}s |",
@@ -134,10 +137,15 @@ def _mean(cases: list[dict[str, object]], field: str) -> float:
     return mean(float(case[field]) for case in cases) if cases else 0.0
 
 
+def _fmt(successes: int, total: int) -> str:
+    if not total:
+        return "n/a (0/0)"
+    low, high = wilson_interval(successes, total)
+    return f"{successes / total:.1%} ({successes}/{total}, 95% CI {low:.1%}–{high:.1%})"
+
+
 def _rate(cases: list[dict[str, object]], field: str) -> str:
-    if not cases:
-        return "n/a"
-    return f"{sum(bool(case[field]) for case in cases) / len(cases):.1%}"
+    return _fmt(sum(bool(case[field]) for case in cases), len(cases))
 
 
 def main(argv: list[str] | None = None) -> int:

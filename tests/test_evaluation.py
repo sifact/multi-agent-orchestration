@@ -24,6 +24,7 @@ from contoso_aero.evaluation.runner import (
     load_questions,
     sample_questions,
 )
+from contoso_aero.evaluation.stats import wilson_interval
 from contoso_aero.evaluation.target import (
     SerializedEvaluator,
     build_model_configuration,
@@ -314,3 +315,22 @@ def test_given_report_without_judges_when_rendered_then_tables_stay_intact() -> 
     category_table = report.split("## By category")[1].split("##")[0]
     assert "| single | 1 |" in category_table
     assert "Not run in this evaluation" in report
+
+
+def test_given_known_counts_when_wilson_interval_computed_then_bounds_match() -> None:
+    low, high = wilson_interval(22, 24)
+    assert (round(low * 100, 1), round(high * 100, 1)) == (74.2, 97.7)
+    low, high = wilson_interval(0, 23)
+    assert low == 0.0 and round(high * 100, 1) == 14.3
+
+
+def test_given_no_cases_when_wilson_interval_computed_then_zero_interval_is_returned() -> None:
+    assert wilson_interval(0, 0) == (0.0, 0.0)
+
+
+def test_given_run_when_report_rendered_then_rates_carry_confidence_intervals() -> None:
+    question = Question("Q001", "single", "What is the value?", ["telemetry"], ["CX7-10001"])
+    case = asdict(_score(question, _result(question.question, "telemetry", "CX7-10001")))
+    report = render_report({"run_id": "r", "cases": [case], "judges_run": False})
+    assert "95% CI" in report
+    assert "noisy" in report
