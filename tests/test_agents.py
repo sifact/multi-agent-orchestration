@@ -124,6 +124,29 @@ def test_given_foreign_table_when_queried_then_access_is_denied(context) -> None
     assert stacked.startswith("Error")
 
 
+def test_given_aggregate_cte_over_own_table_when_queried_then_it_is_allowed(context) -> None:
+    database = context(ScriptedModel()).database_path
+    sql = ("WITH last AS (SELECT esn, max(cycle) AS c FROM engine_telemetry GROUP BY esn) "
+           "SELECT count(*) FROM last")
+
+    result = run_query(database, ("engines", "engine_telemetry"), sql)
+
+    assert result.splitlines()[-1] == "1"
+
+
+def test_given_row_count_or_cte_named_like_foreign_table_when_queried_then_it_is_denied(
+        context) -> None:
+    database = context(ScriptedModel()).database_path
+    tables = ("engines", "engine_telemetry")
+
+    count = run_query(database, tables, "SELECT count(*) FROM ground_truth")
+    shadow = run_query(database, tables, "WITH ground_truth AS (SELECT esn, max(cycle) AS c "
+                       "FROM engine_telemetry GROUP BY esn) SELECT count(*) FROM ground_truth")
+    schema = run_query(database, tables, "SELECT count(*) FROM sqlite_master")
+
+    assert count.startswith("Error") and shadow.startswith("Error") and schema.startswith("Error")
+
+
 def test_given_documents_when_knowledge_searches_then_best_section_ranks_first(context) -> None:
     index = KnowledgeIndex(context(ScriptedModel()).knowledge_dir)
 

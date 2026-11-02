@@ -14,6 +14,8 @@ MAX_CELL_CHARS = 240
 QUERY_SECONDS = 5.0
 
 _ALLOWED_ACTIONS = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_RECURSIVE}
+_SCHEMA_TABLES = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema",
+                  "sqlite_sequence"}
 
 
 def schema_text(database_path: Path, tables: Sequence[str]) -> str:
@@ -72,13 +74,20 @@ def run_query(database_path: Path, tables: Sequence[str], sql: str) -> str:
 def _connect(database_path: Path, tables: Sequence[str]) -> sqlite3.Connection:
     """Open the database read-only and deny any table the agent does not own."""
     connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
-    allowed = set(tables)
+    allowed = {table.casefold() for table in tables}
+    # SQLite also checks reads of materialized CTEs and subqueries by their alias. An alias that
+    # is not a real schema object only exposes data whose own table reads were already checked,
+    # so it is allowed; a real name the agent does not own (or a schema table) is always denied.
+    real = {row[0].casefold() for row in connection.execute("SELECT name FROM sqlite_master")}
+    real |= _SCHEMA_TABLES
 
     def authorize(action: int, arg1: str | None, *_: object) -> int:
         if action in _ALLOWED_ACTIONS:
             return sqlite3.SQLITE_OK
-        if action == sqlite3.SQLITE_READ and arg1 in allowed:
-            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ and arg1 is not None:
+            name = arg1.casefold()
+            if name in allowed or name not in real:
+                return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
 
     connection.set_authorizer(authorize)
