@@ -5,7 +5,7 @@ Project 1 of 2: the router-pattern baseline in a modular monolith.
 | Field | Value |
 |---|---|
 | Status | Built; evaluation in progress |
-| Repository | <https://github.com/fredyfanta3443-ops/multi-agent-orchestration> (private) |
+| Repository | <https://github.com/sifact/multi-agent-orchestration> (public) |
 | Source article | Microsoft ISE, "Orchestration Patterns for Multi-Agent Systems" (Lily Jia, 12 June 2026): <https://devblogs.microsoft.com/ise/coordinator-patterns-multi-agent-systems/> |
 | Companion | Project 2 (coordinators over agent microservices), a separate repository |
 | Last updated | 2026-11-02 |
