@@ -1,5 +1,7 @@
 # Contoso Aero Engines assistant: router baseline
 
+**Live demo:** https://contoso-aero-playground.vercel.app
+
 A question-answering assistant for Contoso Aero Engines, a fictional jet-engine maker. It is built as a **router pattern inside a modular monolith**: a separate intent-detection call picks exactly one agent module to answer each question. It recreates the original architecture described in Microsoft ISE's [Orchestration Patterns for Multi-Agent Systems](https://devblogs.microsoft.com/ise/coordinator-patterns-multi-agent-systems/). A separate project will rebuild it with coordinators over agent microservices, using the same data and evaluation set.
 
 ## Dataset
@@ -45,7 +47,20 @@ which `tests/test_agents.py` enforces.
 uv run contoso-aero-ui            # http://127.0.0.1:8010
 ```
 
-Ask through the router, or send a question straight to one agent to test it without intent detection. The page shows which agent was picked, the answer, the time spent waiting on rate limits versus model time, and every tool call with its SQL and output. It listens on loopback only, because the process holds the model key.
+Ask through the router, or send a question straight to one agent to test it without intent detection. The page shows which agent was picked, the answer, the time spent waiting on rate limits versus model time, and every tool call with its SQL and output. Locally it listens on loopback only. The public demo runs the same handler on Vercel, where the model key stays in the server's environment and never reaches the page.
+
+An About tab explains the project and its three-version roadmap for non-technical readers. The page opens in a dark theme, and the theme toggle switches to light and remembers the choice.
+
+### Deploying the public demo
+
+The demo runs on Vercel as one Python function (`deploy/vercel/api/index.py`) that wraps the same handler. The build script stages the package, the knowledge documents and a copy of the database with the `ground_truth` answer key removed; these staged copies are git-ignored and uploaded straight from your machine, because they contain NASA data.
+
+```bash
+deploy/vercel/build.sh
+cd deploy/vercel && vercel deploy --prod
+```
+
+The model settings (`NL_SQL_BASE_URL`, `NL_SQL_API_KEY`, `NL_SQL_MODEL`) are stored as encrypted environment variables in the Vercel project, not in any file. The demo is public, so every question spends the free-tier model quota.
 
 ## Datasets: test set and dev set
 

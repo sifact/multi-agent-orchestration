@@ -1,6 +1,7 @@
-"""Local browser playground for trying the router and each agent module by hand.
+"""Browser playground for trying the router and each agent module by hand.
 
-Standard library only, bound to loopback because the process holds the model key. Questions run
+Standard library only. Locally it binds to loopback; the public demo runs the same handler as a
+Vercel function (see deploy/vercel). The model key never leaves the server. Questions run
 one at a time behind a lock: the free-tier endpoint is rate limited, and parallel questions would
 only add retry wait to each other's timings.
 """
@@ -142,22 +143,28 @@ class _Handler(BaseHTTPRequestHandler):
         print(f"contoso-aero ui: {self.command} {self.path} -> {args[1] if len(args) > 1 else ''}")
 
 
-def serve(port: int = DEFAULT_PORT) -> None:
-    """Serve the playground on loopback until interrupted.
+def make_handler(data: DataSettings | None = None) -> type[BaseHTTPRequestHandler]:
+    """Build the request handler class; the local server and the Vercel function both use it.
+
+    The model key stays in server-side settings and is never sent to the page.
 
     Raises:
         SettingsError: If the model endpoint is not configured.
         FileNotFoundError: If the dataset has not been built.
     """
-    data = DataSettings()
+    data = data or DataSettings()
     if not data.database_path.is_file():
         raise FileNotFoundError("Dataset missing. Build it with: uv run python -m contoso_aero.data")
     settings = load_model_settings()
     context = AgentContext(model=ChatCompletionClient(settings), database_path=data.database_path,
                            knowledge_dir=data.knowledge_dir, max_steps=settings.max_agent_steps)
-    handler = type("Handler", (_Handler,), {"context": context, "info": describe(settings, data),
-                                            "lock": Lock()})
-    with ThreadingHTTPServer((DEFAULT_HOST, port), handler) as server:
+    return type("Handler", (_Handler,), {"context": context, "info": describe(settings, data),
+                                         "lock": Lock()})
+
+
+def serve(port: int = DEFAULT_PORT) -> None:
+    """Serve the playground on loopback until interrupted."""
+    with ThreadingHTTPServer((DEFAULT_HOST, port), make_handler()) as server:
         print(f"Contoso Aero playground at http://{DEFAULT_HOST}:{port}  (Ctrl+C to stop)")
         try:
             server.serve_forever()

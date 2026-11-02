@@ -22,3 +22,8 @@ dist/
 .copilot-tracking/
 
 .DS_Store
+
+# Vercel deploy staging: the build script copies the package and a trimmed database here.
+/deploy/vercel/src/
+/deploy/vercel/data/
+/deploy/vercel/.vercel/
