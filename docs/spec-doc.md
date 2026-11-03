@@ -1,9 +1,4 @@
----
-title: Contoso Aero Engines Assistant Requirements
-description: Requirements and version roadmap for the router, coordinator and future microservices.
----
-
-## Contoso Aero Engines assistant: requirements specification
+# Contoso Aero Engines assistant: requirements specification
 
 Three-version plan: a router baseline, a coordinator in a modular monolith, then a coordinator
 over agent microservices.
@@ -137,10 +132,10 @@ question ─► planner (1 LLM call)
 
 | ID | Requirement |
 |---|---|
-| FR-16 | CLI: `uv run contoso-aero "question" [--json]`. |
+| FR-16 | CLI: `uv run contoso-aero "question" [--json] [--coordinator]`. The default is the version 1 router; `--coordinator` uses version 2 and prints the plan, per-step and synthesis times. |
 | FR-17 | Playground: `uv run contoso-aero-ui` serves `http://127.0.0.1:8010`. |
 | FR-18 | The playground offers Router (auto), Coordinator (v2, preview) or a direct call to one agent. It shows the selected mode, the answer, the per-stage time split (model vs. rate-limit wait), tokens and each tool call with its SQL and output. Coordinator mode shows numbered plan steps, each step's agent, answer and tools, plus synthesis when used. |
-| FR-19 | The playground binds to loopback only, runs one question at a time, limits requests to 4 KB and questions to 1,000 characters, and never returns the API key. |
+| FR-19 | Locally the playground binds to loopback only. The hosted demo runs the same handler as a Vercel function with the model key held in the server's environment. In both cases it runs one question at a time, limits requests to 4 KB and questions to 1,000 characters, and never returns the API key. |
 
 ### Coordinator
 
@@ -150,9 +145,10 @@ question ─► planner (1 LLM call)
 | FR-21 | Plan parsing rejects unknown agents, too many steps, forward references, cycles and invalid structures. The planner retries invalid output only the configured number of times; an invalid plan after retries returns an error, never a v1 fallback. |
 | FR-22 | Dispatch is sequential and uses only `ROUTES` and `handle(question, context)`. A dependent step receives successful earlier answers as bounded "Findings so far" text. |
 | FR-23 | A failed step causes dependent steps to be skipped. Synthesis receives successful answers and missing-step details; the coordinator does not re-plan. |
-| FR-24 | A successful one-step plan returns the agent answer unchanged without synthesis. A multi-step plan uses one synthesis call, which uses only step answers, identifies each agent's contribution and states what could not be answered. |
+| FR-24 | A successful one-step plan returns the agent answer without synthesis (after the cleaning in FR-27). A multi-step plan uses one synthesis call, which uses only step answers, identifies each agent's contribution and states what could not be answered. |
 | FR-25 | An unsupported plan calls no agent and returns a refusal. Version 1 remains the default pipeline and retains its existing one-agent behavior. |
 | FR-26 | The evaluation runner accepts `--pipeline router|coordinator`, defaults to `router`, and writes coordinator runs to a distinct filename. |
+| FR-27 | Every model-written string the coordinator passes on or shows (plan questions, agent answers used as findings, the merged answer) is cleaned of look-alike characters: non-breaking and narrow spaces, non-breaking hyphens and the minus sign, zero-width characters and full-width brackets. Models emit these inside identifiers such as `CX7-10041`, where they break database lookups, exact-match scoring and copy-paste. Version 1 output is deliberately left as it was, so the measured baseline does not change. |
 
 ## 5. Data requirements
 
@@ -195,7 +191,7 @@ Each row records:
 |---|---|---:|---|
 | Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged across all versions |
 | Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check the version 1 router |
-| Coordination dev set | `data/eval/coordination_probe.jsonl` | 19 | Hand-written questions used to tune and check version 2 planning |
+| Coordination dev set | `data/eval/coordination_probe.jsonl` | 30 | Hand-written questions used to tune and check version 2 planning |
 
 * Prompts and agents are tuned only against the relevant dev set. Never edit the test set to make a run pass.
 * The router probe tests intent detection; the coordination probe tests planning only. Neither dispatches agents or runs the full evaluation.
@@ -283,7 +279,7 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 | Evaluation | Azure AI Evaluation SDK, exact checks plus built-in judges | A library-based, production-style harness that matches the Microsoft audience |
 | Judge model | Same as the agents | Owner's choice to stay on the free tier; bias disclosed |
 | Budget | Stay on the free tier; split evaluation across days | No paid usage |
-| Playground | Standard-library HTTP server and one HTML file | No extra dependencies; local only |
+| Playground | Standard-library HTTP server and one HTML file | No extra dependencies; runs locally or as one Vercel function |
 
 ## 9. Current status
 
@@ -292,8 +288,10 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 | Version 1 dataset, agents, router and CLI | Done |
 | Version 1 browser playground and measured baseline | Done |
 | Version 2 planner, sequential dispatcher, synthesis and evaluation wiring | Implemented |
-| Version 2 browser preview | Implemented and browser-checked |
-| Version 2 planner probe and repository validation | Passed: 19/19 dev cases on three repeats; 98 offline tests and ruff checks passed |
+| Version 2 browser preview | Implemented; checked in a real browser against real model answers on desktop and phone widths, in both themes |
+| Version 2 real-model answers | Five hand-written questions run end to end (three multi-agent, one single-agent, one refusal); every answer matched the database |
+| Version 2 planner probe | The first 19 dev cases passed on three repeats. Of the 11 cases added later, 10 passed on three repeats and the one unstable case (C23) passed 5/5 after a planner prompt clarification. **Pending:** one full 30-case, three-repeat run after that clarification, which was blocked by the free-tier token limit |
+| Repository validation | 108 offline tests and ruff checks pass |
 | Judge runs and full version 2 evaluation | Not run as part of the coordinator implementation |
 | Version 3 microservice deployment | Future work |
 | Deployment | No hosted deployment for the coordinator |
@@ -343,8 +341,14 @@ contract.
 
 ## 12. Remaining work
 
-The version 2 implementation is complete. The planner dev probe matched the expected agent sets
-for all 19 questions on three repeats, and offline tests and ruff checks passed. The 59-question
-full evaluation is intentionally not part of implementation validation. Future evaluation work
-includes running the frozen release gate and, if model budget permits, the seeded judge sample.
+The version 2 implementation is complete and has been exercised on real model answers.
+
+1. Re-run the full planner probe once the free-tier token limit resets, to confirm that the
+   planner prompt clarification did not change any of the 19 earlier cases:
+   `uv run python -m contoso_aero.evaluation.plan_probe --repeat 3`.
+2. Run the frozen 59-question release gate for version 2 with `--pipeline coordinator`, then the
+   seeded judge sample if model budget permits. This is deliberately not done yet, so no version 2
+   result is published on the About page.
+3. Redeploy the hosted demo so it includes the coordinator preview. It still runs version 1 only.
+
 Version 3 remains a separate future project.

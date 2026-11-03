@@ -1,9 +1,4 @@
----
-title: Contoso Aero Engines Assistant
-description: A router baseline and modular-monolith coordinator for a synthetic engine-support assistant.
----
-
-## Contoso Aero Engines assistant: router and coordinator
+# Contoso Aero Engines assistant: router and coordinator
 
 **Live demo:** https://contoso-aero-playground.vercel.app
 
@@ -43,7 +38,10 @@ NL_SQL_MODEL=...
 
 ```bash
 uv run contoso-aero "Which supplier lot is in quarantine and why?"
+uv run contoso-aero --coordinator "Why was CX7-10041 removed, and which plant built it?"
 ```
+
+The second command uses the version 2 coordinator, which lets several agents work on one question.
 
 Router (auto) remains the default: one intent call selects at most one agent, and `unsupported`
 is refused without an agent call. Coordinator (v2, preview) replaces intent detection with one
@@ -86,7 +84,7 @@ The model settings (`NL_SQL_BASE_URL`, `NL_SQL_API_KEY`, `NL_SQL_MODEL`) are sto
 |---|---|---:|---|
 | Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged across all versions |
 | Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check V1 routing |
-| Coordination dev set | `data/eval/coordination_probe.jsonl` | 19 | Hand-written questions used to tune and check V2 planning |
+| Coordination dev set | `data/eval/coordination_probe.jsonl` | 30 | Hand-written questions used to tune and check V2 planning |
 
 * Tune prompts and agents only against the relevant dev set. Never edit the test set to make a run pass.
 * `uv run python -m contoso_aero.evaluation.probe --repeat 3` probes router intent only.
