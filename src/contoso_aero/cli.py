@@ -1,4 +1,4 @@
-"""Command line: ask the Contoso Aero Engines assistant a question."""
+"""Command line: ask the Contoso Aero Engines assistant a question (router or coordinator)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from dataclasses import asdict
 
 from .agents.common import AgentContext
 from .config import DataSettings, SettingsError, load_model_settings
+from .coordination import ask_coordinated
 from .llm import ChatCompletionClient, ModelError
 from .routing import PipelineResult, ask
 
@@ -17,6 +18,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="contoso-aero", description=__doc__)
     parser.add_argument("question", nargs="?", help="Question to ask; omit to read stdin.")
     parser.add_argument("--json", action="store_true", help="Print the full result as JSON.")
+    parser.add_argument("--coordinator", action="store_true",
+                        help="Version 2: let several agents work on the question (default: router).")
     args = parser.parse_args(argv)
     question = args.question if args.question is not None else sys.stdin.read()
 
@@ -33,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {error}", file=sys.stderr)
         return 2
 
-    result = ask(question, context)
+    result = (ask_coordinated if args.coordinator else ask)(question, context)
     if args.json:
         print(json.dumps(asdict(result), indent=2))
     else:
@@ -44,8 +47,15 @@ def main(argv: list[str] | None = None) -> int:
 def _format(result: PipelineResult) -> str:
     if result.error:
         return f"Error: {result.error}"
-    cost = (f"[{result.label}] intent {result.intent_seconds:.2f}s, agent "
-            f"{result.agent_seconds:.2f}s, total {result.total_seconds:.2f}s")
+    if result.plan is not None:
+        steps = ", ".join(f"{step.agent} {result.step_seconds.get(step.id, 0.0):.2f}s"
+                          for step in result.plan.steps)
+        cost = (f"[{', '.join(result.agents_called) or result.label}] plan "
+                f"{result.plan_seconds:.2f}s, steps ({steps}), synthesis "
+                f"{result.synthesis_seconds:.2f}s, total {result.total_seconds:.2f}s")
+    else:
+        cost = (f"[{result.label}] intent {result.intent_seconds:.2f}s, agent "
+                f"{result.agent_seconds:.2f}s, total {result.total_seconds:.2f}s")
     return f"{result.answer}\n\n{cost}"
 
 
