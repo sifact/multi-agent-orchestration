@@ -21,6 +21,7 @@ from contoso_aero.agents.knowledge.search import KnowledgeIndex
 from contoso_aero.agents.production.agent import NOTES as PRODUCTION_NOTES
 from contoso_aero.config import ModelSettings, SettingsError, load_model_settings
 from contoso_aero.coordination.planner import PLANNER_PROMPT
+from contoso_aero.coordination.synthesize import SYNTHESIS_PROMPT
 from contoso_aero.data.reference import OPERATORS, PLANTS
 from contoso_aero.llm import ChatCompletionClient, ModelError, ModelResponse, ToolCall
 from contoso_aero.routing import REFUSAL, ROUTES, ask, detect_intent
@@ -200,6 +201,7 @@ def test_given_telemetry_label_when_asked_then_exactly_one_agent_answers(context
 
     assert result.label == "telemetry" and result.agent is not None
     assert result.agent.agent == "telemetry" and result.answer == "CX7-10001 is active."
+    assert result.agents_called == ["telemetry"] and result.plan is None
     assert result.intent_seconds >= 0 and result.total_seconds >= result.agent_seconds
 
 
@@ -318,7 +320,7 @@ def test_given_intent_prompt_when_labels_checked_then_every_route_label_is_liste
 
 
 def test_given_intent_prompt_when_guardrails_checked_then_no_question_ids_or_airlines_are_named() -> None:
-    prompts = (PROMPT, PLANNER_PROMPT)
+    prompts = (PROMPT, PLANNER_PROMPT, SYNTHESIS_PROMPT)
     assert all(re.search(r"\bQ\d{3}\b", prompt) is None for prompt in prompts)
     assert all(operator.name not in prompt for prompt in prompts for operator in OPERATORS)
     assert all(re.search(r"\bCX7-\d+\b", prompt) is None for prompt in prompts)

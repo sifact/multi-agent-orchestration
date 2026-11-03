@@ -7,8 +7,8 @@ no node that calls a second agent: the router limitation is intentional.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Literal, TypedDict
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -16,6 +16,10 @@ from ..agents.common import AgentContext, AgentReply
 from ..llm import ModelError
 from .intent import IntentResult, detect_intent
 from .router import REFUSAL, route
+
+if TYPE_CHECKING:
+    from ..coordination.dispatch import StepExecution
+    from ..coordination.plan import Plan
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +36,12 @@ class PipelineResult:
     agent_seconds: float
     total_seconds: float
     error: str | None = None
+    agents_called: list[str] = field(default_factory=list)
+    plan: Plan | None = None
+    plan_seconds: float = 0.0
+    step_seconds: dict[str, float] = field(default_factory=dict)
+    synthesis_seconds: float = 0.0
+    coordination_steps: list[StepExecution] = field(default_factory=list)
 
 
 class PipelineState(TypedDict):
@@ -55,7 +65,8 @@ def ask(question: str, context: AgentContext) -> PipelineResult:
         question=question, label=intent.label if intent else "error", answer=final["answer"],
         refused=reply is None and final["error"] is None, intent=intent, agent=reply,
         intent_seconds=final["intent_seconds"], agent_seconds=final["agent_seconds"],
-        total_seconds=time.perf_counter() - started, error=final["error"])
+        total_seconds=time.perf_counter() - started, error=final["error"],
+        agents_called=[reply.agent] if reply else [])
 
 
 def _build_graph(context: AgentContext):
