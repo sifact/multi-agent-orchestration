@@ -156,7 +156,7 @@ def _post(url: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]
 def test_given_running_server_when_page_and_question_requested_then_both_are_served(server) -> None:
     with urlopen(f"{server}/", timeout=5) as response:
         page = response.read()
-        assert b"Contoso Aero" in page and b"Coordinator (v2, preview)" in page
+        assert b"Contoso Aero" in page and b"Team of specialists (v2 preview)" in page
 
     status, body = _post(f"{server}/api/ask", {"question": "Active engines?", "mode": "telemetry"})
 
