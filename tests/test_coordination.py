@@ -142,6 +142,16 @@ def test_given_shared_label_descriptions_when_prompt_checked_then_every_intent_l
     assert all(f"- {label}:" in prompt for label in LABELS)
 
 
+def test_given_planner_prompt_when_category_boundaries_checked_then_sets_are_minimal() -> None:
+    from contoso_aero.coordination.planner import build_planner_prompt
+
+    prompt = " ".join(build_planner_prompt().split())
+
+    assert "Select the smallest set of agents" in prompt
+    assert "Factory inspection results belong to quality, not service" in prompt
+    assert "Include knowledge only when the question asks what document guidance says" in prompt
+
+
 def _context(model: PlanModel) -> AgentContext:
     return AgentContext(model=model, database_path=Path("unused.sqlite3"),
                         knowledge_dir=Path("unused-knowledge"))
