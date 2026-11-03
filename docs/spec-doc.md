@@ -295,7 +295,7 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 | Version 2 frozen-set gate | Attempted all 59 cases on 2026-11-03; Q036-Q059 recorded endpoint quota errors. The judge batch timed out. This is not a complete release result |
 | Version 1 on the V2 model | Not run; the V2 attempt exhausted the model's daily token budget |
 | Version 3 microservice deployment | Future work |
-| Deployment | No hosted deployment for the coordinator |
+| Deployment | Hosted demo on Vercel includes the coordinator preview (redeployed 2026-11-04; checked with one live question) |
 
 ### Initial V1 baseline before routing-gap fixes (run `20261030T143443Z`, exact checks, 59 questions, 0 errors)
 
@@ -351,7 +351,6 @@ full frozen-set release gate has not completed successfully.
    `gpt-oss-120b`; it is not directly comparable to the V2 attempt on `gpt-oss-20b`.
 3. Rerun the full three-repeat planner probe after quota is available; the latest result was
    26/30, with C06, C10, C13 and C22 failing.
-4. Redeploy the hosted demo so it includes the coordinator preview. It still runs version 1 only.
 
 The attempt details and the completed V1 reference are recorded in [the V2 evaluation status](v2-evaluation.md).
 No V2 performance or answer-quality result is published on the About page.
