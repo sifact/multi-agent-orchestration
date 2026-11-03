@@ -1,4 +1,4 @@
-"""Browser playground for trying the router and each agent module by hand.
+"""Browser playground for trying the router, coordinator and agent modules by hand.
 
 Standard library only. Locally it binds to loopback; the public demo runs the same handler as a
 Vercel function (see deploy/vercel). The model key never leaves the server. Questions run
@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from ..agents.common import AgentContext, AgentReply
 from ..config import DataSettings, ModelSettings, load_model_settings
+from ..coordination import ask_coordinated
 from ..data import TABLE_OWNERS
 from ..llm import ChatCompletionClient
 from ..routing import LABELS, ROUTES, PipelineResult, ask
@@ -28,6 +29,7 @@ DEFAULT_PORT = 8010
 MAX_REQUEST_BYTES = 4_096
 MAX_QUESTION_CHARS = 1_000
 ROUTER_MODE = "router"
+COORDINATOR_MODE = "coordinator"
 
 
 def shape_result(result: PipelineResult, mode: str) -> dict[str, object]:
@@ -41,7 +43,25 @@ def shape_result(result: PipelineResult, mode: str) -> dict[str, object]:
         "refused": result.refused,
         "error": result.error,
         "timing": {"intent": result.intent_seconds, "agent": result.agent_seconds,
-                   "total": result.total_seconds},
+                   "total": result.total_seconds, "plan": result.plan_seconds,
+                   "steps": result.step_seconds, "synthesis": result.synthesis_seconds},
+        "agents_called": result.agents_called,
+        "plan": None if result.plan is None else asdict(result.plan),
+        "coordination_steps": [
+            {
+                "id": execution.step.id,
+                "agent": execution.step.agent,
+                "question": execution.step.question,
+                "depends_on": list(execution.step.depends_on),
+                "status": execution.status,
+                "seconds": execution.seconds,
+                "answer": execution.reply.answer if execution.reply else "",
+                "error": execution.error,
+                "tool_calls": [asdict(step) for step in execution.reply.trace]
+                if execution.reply else [],
+            }
+            for execution in result.coordination_steps
+        ],
         "intent": None if intent is None else {
             "label": intent.label, "raw": intent.raw, "input_tokens": intent.input_tokens,
             "output_tokens": intent.output_tokens, "model_seconds": intent.model_seconds,
@@ -60,16 +80,18 @@ def _shape_reply(reply: AgentReply) -> dict[str, object]:
 
 
 def run_question(question: str, mode: str, context: AgentContext) -> PipelineResult:
-    """Ask through the router, or call one agent directly to test it without intent detection."""
+    """Ask through v1 routing, v2 coordination, or one agent directly."""
     if mode == ROUTER_MODE:
         return ask(question, context)
+    if mode == COORDINATOR_MODE:
+        return ask_coordinated(question, context)
     started = time.perf_counter()
     reply = ROUTES[mode](question, context)
     elapsed = time.perf_counter() - started
     return PipelineResult(
         question=question, label=mode, answer=reply.answer, refused=False, intent=None,
         agent=reply, intent_seconds=0.0, agent_seconds=elapsed, total_seconds=elapsed,
-        error=reply.error)
+        error=reply.error, agents_called=[reply.agent])
 
 
 def describe(settings: ModelSettings, data: DataSettings) -> dict[str, object]:
@@ -120,7 +142,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST,
                             {"error": f"Ask a question of 1 to {MAX_QUESTION_CHARS} characters."})
             return
-        if mode != ROUTER_MODE and mode not in ROUTES:
+        if mode not in {ROUTER_MODE, COORDINATOR_MODE} and mode not in ROUTES:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Unknown mode '{mode}'."})
             return
         with self.lock:

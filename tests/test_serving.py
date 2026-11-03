@@ -14,11 +14,14 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from contoso_aero.agents.common import AgentContext
+from contoso_aero.agents.common import AgentContext, AgentReply, ToolStep
 from contoso_aero.config import DataSettings, ModelSettings
+from contoso_aero.coordination.dispatch import StepExecution
+from contoso_aero.coordination.plan import Plan, PlanStep
 from contoso_aero.llm import ModelResponse, ToolCall
+from contoso_aero.routing.graph import PipelineResult
 from contoso_aero.serving import describe, run_question, shape_result
-from contoso_aero.serving.web_app import _Handler
+from contoso_aero.serving.web_app import COORDINATOR_MODE, _Handler
 
 
 class ScriptedModel:
@@ -76,6 +79,45 @@ def test_given_router_mode_when_off_topic_then_refusal_is_shaped_without_agent(c
     assert shaped["intent"]["label"] == "unsupported"
 
 
+def test_given_coordinator_result_when_shaped_then_plan_steps_and_tool_calls_are_available() -> None:
+    step = PlanStep("first", "telemetry", "Read the current status.", ())
+    reply = AgentReply(
+        agent="telemetry", answer="Engine is active.",
+        trace=[ToolStep("query_sql", {"sql": "SELECT status"}, "active")],
+    )
+    result = PipelineResult(
+        question="Combine records.", label="telemetry", answer="Engine is active.",
+        refused=False, intent=None, agent=reply, intent_seconds=0.1, agent_seconds=0.2,
+        total_seconds=0.3, agents_called=["telemetry"],
+        plan=Plan(status="plan", steps=(step,)), plan_seconds=0.1,
+        step_seconds={"first": 0.2}, coordination_steps=[
+            StepExecution(step, "completed", reply, 0.2),
+        ],
+    )
+
+    shaped = shape_result(result, COORDINATOR_MODE)
+
+    assert shaped["plan"]["steps"][0]["agent"] == "telemetry"
+    assert shaped["coordination_steps"][0]["tool_calls"][0]["tool"] == "query_sql"
+    assert shaped["timing"]["steps"] == {"first": 0.2}
+
+
+def test_given_coordinator_mode_when_question_run_then_coordinator_pipeline_is_used(
+    context, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = PipelineResult(
+        question="Combine records.", label="coordinator", answer="Combined.",
+        refused=False, intent=None, agent=None, intent_seconds=0.1, agent_seconds=0.0,
+        total_seconds=0.1,
+    )
+    monkeypatch.setattr("contoso_aero.serving.web_app.ask_coordinated",
+                        lambda question, agent_context: expected)
+
+    result = run_question("Combine records.", COORDINATOR_MODE, context())
+
+    assert result is expected
+
+
 def test_given_settings_when_described_then_no_key_is_exposed(tmp_path: Path) -> None:
     settings = ModelSettings(base_url="https://api.example.test/v1", api_key="secret-key",
                              model_name="m")
@@ -113,7 +155,8 @@ def _post(url: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]
 
 def test_given_running_server_when_page_and_question_requested_then_both_are_served(server) -> None:
     with urlopen(f"{server}/", timeout=5) as response:
-        assert b"Contoso Aero" in response.read()
+        page = response.read()
+        assert b"Contoso Aero" in page and b"Coordinator (v2, preview)" in page
 
     status, body = _post(f"{server}/api/ask", {"question": "Active engines?", "mode": "telemetry"})
 

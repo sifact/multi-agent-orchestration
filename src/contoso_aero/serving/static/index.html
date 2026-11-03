@@ -223,6 +223,23 @@
   details.step.err summary .n { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
   .step-body { border-top: 1px solid var(--line); padding: 12px 14px; display: grid; gap: 10px; }
   .step-body label { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; font-weight: 650; }
+  .coord-plan { display: grid; gap: 10px; min-width: 0; }
+  .coord-step { --c: var(--brand); min-width: 0; border: 1px solid var(--line); border-left: 3px solid var(--c);
+                border-radius: 12px; background: var(--bg-2); padding: 12px; }
+  .coord-step h3 { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                   font-size: 14px; font-weight: 650; }
+  .coord-step h3 .agent-name { color: var(--c); text-transform: capitalize; }
+  .coord-step .coord-question, .coord-step .coord-answer { margin: 8px 0 0; overflow-wrap: anywhere; }
+  .coord-step .coord-meta { color: var(--faint); font-size: 12px; margin-top: 5px; overflow-wrap: anywhere; }
+  .coord-step .coord-answer { font-size: 14px; }
+  .coord-step .coord-tools { margin-top: 10px; }
+  .coord-step.synthesis { --c: var(--brand-2); }
+  .coord-step.failed { border-left-color: var(--err); }
+  .coord-step.skipped { border-style: dashed; opacity: .8; }
+  @media (max-width: 720px) {
+    .coord-step { padding: 10px; }
+    .coord-step h3 { align-items: flex-start; }
+  }
   pre.code { margin: 4px 0 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
              padding: 11px 13px; overflow: auto; max-height: 320px; font: 12.5px/1.6 var(--mono);
              white-space: pre-wrap; word-break: break-word; }
@@ -410,6 +427,12 @@
         <div class="arrow to-lanes" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
         <div class="lanes" id="lanes"></div>
       </div>
+    </section>
+
+    <section class="card hidden" id="coordinator-card">
+      <h2 class="eyebrow">Coordinator plan</h2>
+      <p class="sub">The coordinator plans and runs steps one at a time, then combines multi-step answers.</p>
+      <div id="coord-plan" class="coord-plan"><p class="empty">Run a question to see its plan.</p></div>
     </section>
 
     <section class="card" id="answer-card">
@@ -746,20 +769,26 @@ function route() {
 
 /* ---------- static UI ---------- */
 function renderModes() {
-  const items = [{ id: "router", label: "Router (auto)", c: "var(--brand)" }, "sep",
+  const items = [{ id: "router", label: "Router (auto)", c: "var(--brand)" },
+    { id: "coordinator", label: "Coordinator (v2, preview)", c: "var(--brand-2)" }, "sep",
     ...AGENTS.map((a) => ({ id: a, label: a[0].toUpperCase() + a.slice(1), c: color(a) }))];
   $("modes").innerHTML = items.map((m) => m === "sep" ? '<span class="mode-sep"></span>' :
     `<button class="mode" style="--c:${m.c}" data-mode="${m.id}" aria-pressed="${m.id === mode}">
        <span class="swatch"></span>${esc(m.label)}</button>`).join("");
+  $("pipeline-card").classList.toggle("hidden", mode === "coordinator");
+  $("coordinator-card").classList.toggle("hidden", mode !== "coordinator");
   $("mode-hint").textContent = mode === "router"
     ? "The router picks one agent for you."
-    : `Skips the router and asks the ${mode} agent directly.`;
+    : mode === "coordinator"
+      ? "Plans a small team of specialists to work through one question."
+      : `Skips the router and asks the ${mode} agent directly.`;
 }
 function renderLanes(active, pending) {
   const lanes = [...AGENTS, "unsupported"];
   $("lanes").innerHTML = lanes.map((a) => {
     const on = a === active ? " on" : "";
-    const pulse = pending && (mode === "router" || a === mode) ? " pulse" : "";
+    const pulse = pending && (mode === "router" || mode === "coordinator" || a === mode)
+      ? " pulse" : "";
     const label = a === "unsupported" ? "refuse" : a;
     return `<span class="lane${on}${pulse}" style="--c:${color(a)}"><span class="swatch"></span>${label}</span>`;
   }).join("");
@@ -854,17 +883,85 @@ function errorHtml(message) {
 }
 
 /* ---------- result ---------- */
+function traceCallHtml(s, i) {
+  const sql = typeof s.arguments?.sql === "string" ? s.arguments.sql : null;
+  const args = sql ? `<pre class="code">${highlightSql(sql)}</pre>`
+    : `<pre class="code">${esc(JSON.stringify(s.arguments, null, 2))}</pre>`;
+  const peek = sql ? sql.replace(/\s+/g, " ") : Object.values(s.arguments || {}).join(" · ");
+  const failed = /^Error:/.test(s.output);
+  return `<details class="step${failed ? " err" : ""}"${i < 3 ? " open" : ""}>
+    <summary><span class="n">${i + 1}</span><span class="tool">${esc(s.tool)}</span>
+      <span class="peek">${esc(peek)}</span><span class="chev">›</span></summary>
+    <div class="step-body"><div><label>${sql ? "SQL" : "Arguments"}</label>${args}</div>
+      <div><label>Output</label><pre class="code">${esc(s.output)}</pre></div></div>
+  </details>`;
+}
+
+function renderCoordinator(r) {
+  const card = $("coordinator-card");
+  card.classList.toggle("hidden", r.mode !== "coordinator");
+  if (r.mode !== "coordinator") return;
+  const plan = r.plan;
+  if (!plan) {
+    $("coord-plan").innerHTML = `<p class="empty">${r.error ? errorHtml(r.error) : "No plan available."}</p>`;
+    return;
+  }
+  if (plan.status === "unsupported") {
+    $("coord-plan").innerHTML = '<p class="empty">The coordinator refused this request. No agent ran.</p>';
+    return;
+  }
+  const outcomes = new Map((r.coordination_steps || []).map((step) => [step.id, step]));
+  const steps = (plan.steps || []).map((step, index) => {
+    const outcome = outcomes.get(step.id);
+    const status = outcome?.status || "not run";
+    const stateClass = status === "failed" ? " failed" : status === "skipped" ? " skipped" : "";
+    const dependencies = (step.depends_on || []).length
+      ? `<p class="coord-meta">Depends on: ${esc(step.depends_on.join(", "))}</p>` : "";
+    const answer = outcome?.answer
+      ? `<div class="coord-answer answer">${markdown(outcome.answer)}</div>`
+      : outcome?.error
+        ? `<div class="coord-answer">${errorHtml(outcome.error)}</div>`
+        : '<p class="coord-answer empty">No answer was returned.</p>';
+    const calls = outcome?.tool_calls || [];
+    const tools = calls.length
+      ? calls.map((call, i) => traceCallHtml(call, i)).join("")
+      : '<p class="empty">No tool calls.</p>';
+    return `<article class="coord-step${stateClass}" style="--c:${color(step.agent)}">
+      <h3><span class="n">${index + 1}</span><span class="agent-name">${esc(step.agent)}</span>
+        <span class="tag">${esc(status)}</span><span class="spacer"></span>
+        <span class="coord-meta">${secs(outcome?.seconds)}s</span></h3>
+      <p class="coord-question">${markdown(step.question)}</p>${dependencies}${answer}
+      <div class="coord-tools"><p class="eyebrow">Tool calls <span class="tag">${calls.length}</span></p>
+        <div class="steps">${tools}</div></div>
+    </article>`;
+  });
+  if (plan.steps.length > 1) {
+    const synthesis = r.answer
+      ? `<div class="coord-answer answer">${markdown(r.answer)}</div>`
+      : `<div class="coord-answer">${errorHtml(r.error || "Synthesis returned no answer.")}</div>`;
+    steps.push(`<article class="coord-step synthesis">
+      <h3><span class="n">${plan.steps.length + 1}</span>
+        <span class="agent-name">Synthesis</span><span class="spacer"></span>
+        <span class="coord-meta">${secs(r.timing.synthesis)}s</span></h3>
+      ${synthesis}</article>`);
+  }
+  $("coord-plan").innerHTML = steps.join("");
+}
+
 function showResult(r) {
   stopTimer();
   const label = r.refused ? "unsupported" : r.label;
   const intent = r.intent;
+  renderCoordinator(r);
   $("n-intent").classList.remove("pulse");
   $("n-intent").classList.toggle("skipped", r.mode !== "router");
-  $("intent-label").textContent = r.mode !== "router" ? "skipped (direct)" : (intent ? intent.label : "error");
+  $("intent-label").textContent = r.mode === "coordinator" ? "planner"
+    : r.mode !== "router" ? "skipped (direct)" : (intent ? intent.label : "error");
   $("intent-t").textContent = r.mode === "router" && intent ? `${secs(r.timing.intent)}s` : "";
   renderLanes(r.error && !intent && r.mode === "router" ? null : label, false);
 
-  const tagText = r.error ? "error" : r.refused ? "refused" : `${r.label} agent`;
+  const tagText = r.error ? "error" : r.refused ? "refused"
+    : r.mode === "coordinator" ? "coordinator" : `${r.label} agent`;
   $("answer-tag").innerHTML = `<span class="tag" style="--c:${r.error ? "var(--err)" : color(label)}">${esc(tagText)}</span>`;
   const box = $("answer");
   box.className = "answer fade" + (r.error ? " error" : r.refused ? " refused" : "");
@@ -879,7 +976,7 @@ function showResult(r) {
   const wait = (intent?.retry_wait_seconds || 0) + (a?.retry_wait_seconds || 0);
   const model = (intent?.model_seconds || 0) + (a?.model_seconds || 0);
   const stats = [
-    ["Total", secs(r.timing.total), "s"], ["Intent", secs(r.timing.intent), "s"],
+    ["Total", secs(r.timing.total), "s"], [r.mode === "coordinator" ? "Plan" : "Intent", secs(r.timing.intent), "s"],
     ["Agent", secs(r.timing.agent), "s"], ["Rate-limit wait", secs(wait), "s", wait > 0],
     ["Model time", secs(model), "s"], ["Tokens", tokensIn.toLocaleString(), `in · ${tokensOut.toLocaleString()} out`],
     ["Model calls", (a?.model_calls || 0) + (intent && r.mode === "router" ? 1 : 0), ""], ["Tool calls", a?.tool_calls || 0, ""],
@@ -896,18 +993,10 @@ function showResult(r) {
   const trace = a?.trace || [];
   $("trace-card").classList.toggle("hidden", !a && !intent);
   $("trace-count").textContent = trace.length;
-  $("steps").innerHTML = trace.length ? trace.map((s, i) => {
-    const sql = typeof s.arguments?.sql === "string" ? s.arguments.sql : null;
-    const args = sql ? `<pre class="code">${highlightSql(sql)}</pre>` : `<pre class="code">${esc(JSON.stringify(s.arguments, null, 2))}</pre>`;
-    const peek = sql ? sql.replace(/\s+/g, " ") : Object.values(s.arguments || {}).join(" · ");
-    const failed = /^Error:/.test(s.output);
-    return `<details class="step${failed ? " err" : ""}"${i === trace.length - 1 && trace.length < 3 ? " open" : ""}>
-      <summary><span class="n">${i + 1}</span><span class="tool">${esc(s.tool)}</span>
-        <span class="peek">${esc(peek)}</span><span class="chev">›</span></summary>
-      <div class="step-body"><div><label>${sql ? "SQL" : "Arguments"}</label>${args}</div>
-        <div><label>Output</label><pre class="code">${esc(s.output)}</pre></div></div>
-    </details>`;
-  }).join("") : `<p class="empty">${r.refused ? "No agent ran: the router refused this question." : "The agent answered without calling a tool."}</p>`;
+  $("steps").innerHTML = trace.length ? trace.map(traceCallHtml).join("")
+    : `<p class="empty">${r.refused ? "No agent ran: the request was refused."
+      : r.mode === "coordinator" ? "No tools were called by the planned agents."
+        : "The agent answered without calling a tool."}</p>`;
   const raw = $("raw-intent");
   raw.classList.toggle("hidden", !(intent && r.mode === "router"));
   if (intent) raw.textContent = `Intent model replied: "${intent.raw}"`;
@@ -920,7 +1009,9 @@ function startTimer() {
   const tick = () => {
     const s = (performance.now() - started) / 1000;
     box.innerHTML = `<div class="placeholder"><span class="elapsed">${s.toFixed(1)}s</span>
-      <span>${mode === "router" ? "Picking the right agent, then looking up the data…" : `The ${mode} agent is looking up the data…`}</span>
+      <span>${mode === "router" ? "Picking the right agent, then looking up the data…"
+        : mode === "coordinator" ? "Planning steps, then working through them in order…"
+          : `The ${mode} agent is looking up the data…`}</span>
       ${s > 8 ? "<span class='hint'>The free AI tier can add short waits.</span>" : ""}</div>`;
   };
   tick(); timer = setInterval(tick, 100);
@@ -934,8 +1025,12 @@ async function ask(question) {
   $("answer-tag").innerHTML = ""; $("copy").classList.add("hidden");
   $("n-intent").classList.toggle("pulse", mode === "router");
   $("n-intent").classList.toggle("skipped", mode !== "router");
-  $("intent-label").textContent = mode === "router" ? "classifying…" : "skipped (direct)";
+  $("intent-label").textContent = mode === "router" ? "classifying…"
+    : mode === "coordinator" ? "planning…" : "skipped (direct)";
   $("intent-t").textContent = "";
+  if (mode === "coordinator") {
+    $("coord-plan").innerHTML = '<p class="placeholder">Creating a plan, then running its steps in order…</p>';
+  }
   renderLanes(null, true);
   // On one column the pipeline and answer sit below the fold, so bring them into view.
   if (oneColumn()) {
