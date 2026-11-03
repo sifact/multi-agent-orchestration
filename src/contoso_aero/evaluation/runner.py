@@ -281,11 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         questions = load_questions(question_path)
         if args.sample is not None:
             questions = sample_questions(questions, args.sample, DataSettings().seed)
-            output = _pipeline_output(args.output, args.pipeline)
-            record = _build_sdk_run(questions, context, settings, question_path, output,
-                                    with_judges=not args.no_judges, pipeline=args.pipeline)
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+        output = _pipeline_output(args.output, args.pipeline)
+        record = _build_sdk_run(questions, context, settings, question_path, output,
+                                with_judges=not args.no_judges, pipeline=args.pipeline)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     except (ModelError, SettingsError, ValueError, OSError) as error:
         print(f"Evaluation failed: {error}")
         return 2

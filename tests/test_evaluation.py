@@ -10,6 +10,7 @@ import pytest
 
 from contoso_aero.agents.common import AgentReply
 from contoso_aero.coordination import Plan
+from contoso_aero.evaluation import runner
 from contoso_aero.evaluation.evaluators import (
     _contains_number,
     correct_refusal,
@@ -392,3 +393,25 @@ def test_given_run_when_report_rendered_then_rates_carry_confidence_intervals() 
     report = render_report({"run_id": "r", "cases": [case], "judges_run": False})
     assert "95% CI" in report
     assert "noisy" in report
+
+
+def test_given_no_sample_flag_when_runner_main_runs_then_full_run_is_written(
+    tmp_path, monkeypatch
+) -> None:
+    question = Question("Q001", "single", "What is the value?", ["telemetry"], ["CX7-10001"])
+    questions_file = tmp_path / "questions.jsonl"
+    questions_file.write_text("")
+    calls: list[int] = []
+
+    def fake_build_sdk_run(selected, *args, **kwargs):
+        calls.append(len(selected))
+        return {"cases": [asdict(_score(question, _result(question.question, "telemetry", "x")))]}
+
+    monkeypatch.setattr(runner, "_build_context", lambda: (None, questions_file, None))
+    monkeypatch.setattr(runner, "load_questions", lambda path: [question, question])
+    monkeypatch.setattr(runner, "_build_sdk_run", fake_build_sdk_run)
+    output = tmp_path / "run.json"
+
+    code = runner.main(["--output", str(output)])
+
+    assert code == 0 and calls == [2] and output.is_file()
