@@ -7,11 +7,18 @@ from collections.abc import Sequence
 
 
 def routing_accuracy(
-    predicted_agent: str, expected_agents: Sequence[str], **kwargs: object
+    predicted_agent: str,
+    expected_agents: Sequence[str],
+    predicted_agents: Sequence[str] | None = None,
+    **kwargs: object,
 ) -> dict[str, object]:
-    """Score whether the one-agent baseline selected the complete required route."""
+    """Score a complete agent set when supplied, otherwise preserve the v1 route rule."""
     expected = list(expected_agents)
-    correct = predicted_agent == expected[0] if len(expected) == 1 else not expected and predicted_agent == "unsupported"
+    if predicted_agents is not None:
+        correct = set(predicted_agents) == set(expected)
+    else:
+        correct = (predicted_agent == expected[0] if len(expected) == 1
+                   else not expected and predicted_agent == "unsupported")
     return {"score": float(correct), "passed": correct}
 
 

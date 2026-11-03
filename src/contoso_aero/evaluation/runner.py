@@ -10,9 +10,11 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from ..agents.common import AgentContext
 from ..config import DataSettings, ModelSettings, SettingsError, load_model_settings
+from ..coordination import ask_coordinated
 from ..llm import ChatCompletionClient, ModelError
 from ..routing import PipelineResult, ask
 from .evaluators import (
@@ -41,6 +43,7 @@ class CaseResult:
     question: str
     expected_agents: list[str]
     predicted_agent: str
+    predicted_agents: list[str]
     routing_correct: bool
     answer: str
     answer_correct: bool
@@ -90,10 +93,21 @@ def load_questions(path: Path) -> list[Question]:
     return questions
 
 
-def run_evaluation(questions: list[Question], context: AgentContext, question_file: Path) -> EvaluationRun:
+def run_evaluation(
+    questions: list[Question],
+    context: AgentContext,
+    question_file: Path,
+    pipeline: Literal["router", "coordinator"] = "router",
+) -> EvaluationRun:
     """Run every question in order; one model failure is recorded, not silently skipped."""
     created = datetime.now(UTC)
-    cases = [_score(question, ask(question.question, context)) for question in questions]
+    if pipeline == "router":
+        run = ask
+    elif pipeline == "coordinator":
+        run = ask_coordinated
+    else:
+        raise ValueError(f"Unknown evaluation pipeline '{pipeline}'.")
+    cases = [_score(question, run(question.question, context)) for question in questions]
     return EvaluationRun(
         run_id=created.strftime("%Y%m%dT%H%M%SZ"),
         created_at=created.isoformat(),
@@ -121,13 +135,19 @@ def _score(question: Question, result: PipelineResult) -> CaseResult:
     # A router answer is complete only when one agent is sufficient. Multi-agent
     # rows intentionally score false: that is the baseline limitation project 2
     # is meant to measure.
-    routing_correct = routing_accuracy(predicted, question.expected_agents)["passed"]
+    if result.plan is None and not result.agents_called:
+        routing_correct = routing_accuracy(predicted, question.expected_agents)["passed"]
+    else:
+        routing_correct = routing_accuracy(
+            predicted, question.expected_agents, predicted_agents=result.agents_called
+        )["passed"]
     return CaseResult(
         id=question.id,
         category=question.category,
         question=question.question,
         expected_agents=question.expected_agents,
         predicted_agent=predicted,
+        predicted_agents=list(result.agents_called),
         routing_correct=routing_correct,
         answer=result.answer,
         answer_correct=answer_correct,
@@ -195,7 +215,8 @@ def sample_questions(questions: list[Question], size: int, seed: int) -> list[Qu
 
 
 def _build_sdk_run(questions: list[Question], context: AgentContext, settings: ModelSettings,
-                   question_file: Path, output: Path, with_judges: bool = True) -> dict[str, object]:
+                   question_file: Path, output: Path, with_judges: bool = True,
+                   pipeline: Literal["router", "coordinator"] = "router") -> dict[str, object]:
     results: list[PipelineResult] = []
     with tempfile.TemporaryDirectory(prefix="contoso-aero-eval-") as directory:
         input_path = Path(directory) / "questions.jsonl"
@@ -212,7 +233,7 @@ def _build_sdk_run(questions: list[Question], context: AgentContext, settings: M
         # in flight, so agent latency is not inflated by contention and judges stay under
         # the endpoint's tokens-per-minute limit instead of exhausting their 429 retries.
         model_lock = threading.Lock()
-        target = build_pipeline_target(context, results.append, model_lock)
+        target = build_pipeline_target(context, results.append, model_lock, pipeline)
         judges = (build_judge_evaluators(build_model_configuration(settings), model_lock)
                   if with_judges else None)
         sdk_result = run_sdk_target_evaluation(input_path, output, target, judges)
@@ -225,6 +246,7 @@ def _build_sdk_run(questions: list[Question], context: AgentContext, settings: M
                             question_file=str(question_file.resolve()),
                             cases=[asdict(_score(question, result)) for question, result in paired])
     record["judges_run"] = with_judges
+    record["pipeline"] = pipeline
     return record
 
 
@@ -246,7 +268,8 @@ def main(argv: list[str] | None = None) -> int:
     """Run the corpus; paths can be overridden for repeatable CI or local experiments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path)
-    parser.add_argument("--output", type=Path, default=Path("data/eval/runs/latest.json"))
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--pipeline", choices=("router", "coordinator"), default="router")
     parser.add_argument("--no-judges", action="store_true",
                         help="Exact checks only; skips the three LLM judges to save tokens.")
     parser.add_argument("--sample", type=int,
@@ -258,15 +281,27 @@ def main(argv: list[str] | None = None) -> int:
         questions = load_questions(question_path)
         if args.sample is not None:
             questions = sample_questions(questions, args.sample, DataSettings().seed)
-        record = _build_sdk_run(questions, context, settings, question_path, args.output,
-                                with_judges=not args.no_judges)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+            output = _pipeline_output(args.output, args.pipeline)
+            record = _build_sdk_run(questions, context, settings, question_path, output,
+                                    with_judges=not args.no_judges, pipeline=args.pipeline)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     except (ModelError, SettingsError, ValueError, OSError) as error:
         print(f"Evaluation failed: {error}")
         return 2
-    print(f"Wrote {len(record['cases'])} cases to {args.output}")
+    print(f"Wrote {len(record['cases'])} cases to {output}")
     return 0
+
+
+def _pipeline_output(
+    requested: Path | None,
+    pipeline: Literal["router", "coordinator"],
+) -> Path:
+    """Give coordinator runs a separate filename even when a router path is requested."""
+    path = requested or Path("data/eval/runs/latest.json")
+    if pipeline == "router" or path.stem.endswith("-coordinator"):
+        return path
+    return path.with_name(f"{path.stem}-coordinator{path.suffix}")
 
 
 if __name__ == "__main__":

@@ -6,4 +6,4 @@ Constructs the Azure model configuration, evaluator mapping, judges, and pipelin
 * Serializes the target and judges behind one lock, so one model call is in flight at a time.
 * Registers four deterministic project evaluators.
 * Maps built-in judge inputs to question, response, and grounded context columns.
-* Adapts one application invocation to the SDK target callback shape.
+* Adapts router or coordinator invocations to the SDK target callback shape.

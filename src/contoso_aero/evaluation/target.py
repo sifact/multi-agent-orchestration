@@ -6,7 +6,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from importlib.metadata import version
 from threading import Lock
-from typing import Any
+from typing import Any, Literal
 
 from azure.ai.evaluation import (
     GroundednessEvaluator,
@@ -90,6 +90,7 @@ def evaluator_config(target_outputs: bool = False) -> dict[str, dict[str, dict[s
     close = "}"
     exact = {
         "predicted_agent": f"{output}predicted_agent{close}",
+        "predicted_agents": f"{output}predicted_agents{close}",
         "expected_agents": "${data.expected_agents}",
         "response": f"{output}response{close}",
         "expected_facts": "${data.expected_facts}",
@@ -99,7 +100,8 @@ def evaluator_config(target_outputs: bool = False) -> dict[str, dict[str, dict[s
     }
     return {
         "routing_accuracy": {"column_mapping": {k: v for k, v in exact.items()
-                                                 if k in {"predicted_agent", "expected_agents"}}},
+                                                 if k in {"predicted_agent", "predicted_agents",
+                                                          "expected_agents"}}},
         "expected_facts_found": {"column_mapping": {k: v for k, v in exact.items()
                                                      if k in {"response", "expected_facts"}}},
         "expected_numbers": {"column_mapping": {k: v for k, v in exact.items()
@@ -120,18 +122,27 @@ def build_pipeline_target(
     context: Any,
     on_result: Callable[[Any], None] | None = None,
     lock: Lock | None = None,
+    pipeline: Literal["router", "coordinator"] = "router",
 ) -> Callable[[str], dict[str, object]]:
     """Adapt the application pipeline to the SDK target callback contract."""
-    from ..routing import ask
+    if pipeline == "router":
+        from ..routing import ask
+        run_pipeline = ask
+    elif pipeline == "coordinator":
+        from ..coordination import ask_coordinated
+        run_pipeline = ask_coordinated
+    else:
+        raise ValueError(f"Unknown evaluation pipeline '{pipeline}'.")
 
     def target(question: str) -> dict[str, object]:
         with lock if lock is not None else nullcontext():
-            result = ask(question, context)
+            result = run_pipeline(question, context)
         if on_result is not None:
             on_result(result)
         return {
             "response": result.answer,
             "predicted_agent": result.label,
+            "predicted_agents": result.agents_called,
             "refused": result.refused,
             "context": "\n".join(result.agent.context if result.agent else ""),
         }

@@ -4,10 +4,12 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
 from contoso_aero.agents.common import AgentReply
+from contoso_aero.coordination import Plan
 from contoso_aero.evaluation.evaluators import (
     _contains_number,
     correct_refusal,
@@ -20,6 +22,7 @@ from contoso_aero.evaluation.questions import Question
 from contoso_aero.evaluation.report import render_report
 from contoso_aero.evaluation.runner import (
     _pair_results,
+    _pipeline_output,
     _score,
     load_questions,
     sample_questions,
@@ -215,6 +218,61 @@ def test_given_exact_evaluators_when_expected_values_match_then_all_pass() -> No
         "The value is 1,406.25.", [{"value": 1406.23, "tolerance": 0.05}]
     )["score"] == 1.0
     assert correct_refusal(True, "refuse")["score"] == 1.0
+
+
+def test_given_predicted_agent_set_when_routing_scored_then_all_expected_agents_must_match() -> None:
+    correct = routing_accuracy(
+        "coordinator", ["telemetry", "service"], predicted_agents=["service", "telemetry"]
+    )
+    incomplete = routing_accuracy(
+        "coordinator", ["telemetry", "service"], predicted_agents=["telemetry"]
+    )
+    refusal = routing_accuracy("unsupported", [], predicted_agents=[])
+
+    assert correct["passed"] and not incomplete["passed"] and refusal["passed"]
+
+
+def test_given_legacy_router_score_when_multi_agent_expected_then_it_stays_incorrect() -> None:
+    assert routing_accuracy("telemetry", ["telemetry", "service"])["passed"] is False
+    assert routing_accuracy("telemetry", ["telemetry"])["passed"] is True
+
+
+def test_given_coordinator_result_when_scored_then_case_keeps_the_complete_agent_set() -> None:
+    question = Question("C01", "multi", "Combine two domains.", ["telemetry", "service"])
+    result = PipelineResult(
+        question=question.question, label="coordinator", answer="Both facts are available.",
+        refused=False, intent=None, agent=AgentReply(agent="coordinator", answer="Both facts."),
+        intent_seconds=0.1, agent_seconds=0.2, total_seconds=0.3,
+        agents_called=["telemetry", "service"],
+        plan=Plan(status="plan", steps=()),
+    )
+
+    case = _score(question, result)
+
+    assert case.routing_correct and case.predicted_agents == ["telemetry", "service"]
+
+
+def test_given_coordinator_run_path_when_named_then_it_cannot_overwrite_router_path() -> None:
+    assert _pipeline_output(None, "coordinator").name == "latest-coordinator.json"
+    assert _pipeline_output(Path("custom.json"), "coordinator").name == "custom-coordinator.json"
+    assert _pipeline_output(Path("custom.json"), "router").name == "custom.json"
+
+
+def test_given_multi_agent_category_when_report_rendered_then_rate_cells_have_confidence_intervals() -> None:
+    case = {
+        "id": "C01", "category": "multi", "expected_behavior": "answer",
+        "predicted_agent": "coordinator", "predicted_agents": ["telemetry", "service"],
+        "routing_correct": True, "answer_correct": True, "refusal_correct": True,
+        "intent_seconds": 1.0, "agent_seconds": 2.0, "total_seconds": 3.0,
+        "intent_tokens": 0, "intent_output_tokens": 0, "agent_input_tokens": 10,
+        "agent_output_tokens": 4, "retry_wait_seconds": 0.0,
+        "missing_facts": [], "missing_numbers": [],
+    }
+
+    report = render_report({"cases": [case], "judges_run": False})
+
+    multi_row = next(line for line in report.splitlines() if line.startswith("| multi |"))
+    assert multi_row.count("95% CI") == 2
 
 
 def test_given_model_settings_when_configuration_built_then_secret_is_not_repr() -> None:

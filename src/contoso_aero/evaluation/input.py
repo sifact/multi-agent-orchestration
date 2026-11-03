@@ -24,6 +24,7 @@ class EvaluationRow:
     response: str
     chosen_agent: str
     predicted_agent: str
+    predicted_agents: list[str]
     refused: bool
     context: str
     expected_agents: list[str]
@@ -48,6 +49,7 @@ def build_row(question: Question, result: PipelineResult, seed: int) -> Evaluati
         response=result.answer,
         chosen_agent=result.label,
         predicted_agent=result.label,
+        predicted_agents=list(result.agents_called),
         refused=result.refused,
         context=context,
         expected_agents=question.expected_agents,
