@@ -3,7 +3,8 @@
 from pathlib import Path
 
 PACKAGES = ("data", "evaluation", "llm", "routing", "agents/common", "agents/telemetry",
-            "agents/service", "agents/production", "agents/quality", "agents/knowledge")
+            "agents/service", "agents/production", "agents/quality", "agents/knowledge",
+            "coordination")
 SOURCE_ROOT = Path(__file__).parents[1] / "src" / "contoso_aero"
 NOT_CORE = {"__init__", "__main__"}
 

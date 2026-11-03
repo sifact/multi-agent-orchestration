@@ -23,6 +23,7 @@ class DataSettings:
     knowledge_dir: Path = PROJECT_ROOT / "data" / "knowledge"
     eval_path: Path = PROJECT_ROOT / "data" / "eval" / "questions.jsonl"
     probe_path: Path = PROJECT_ROOT / "data" / "eval" / "routing_probe.jsonl"
+    coordination_probe_path: Path = PROJECT_ROOT / "data" / "eval" / "coordination_probe.jsonl"
     subset: str = "FD003"
     seed: int = 20260612
     snapshot_date: date = date(2026, 10, 29)
