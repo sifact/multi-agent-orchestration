@@ -1,13 +1,19 @@
-# Contoso Aero Engines assistant: requirements specification
+---
+title: Contoso Aero Engines Assistant Requirements
+description: Requirements and version roadmap for the router, coordinator and future microservices.
+---
 
-Project 1 of 2: the router-pattern baseline in a modular monolith.
+## Contoso Aero Engines assistant: requirements specification
+
+Three-version plan: a router baseline, a coordinator in a modular monolith, then a coordinator
+over agent microservices.
 
 | Field | Value |
 |---|---|
-| Status | Built; evaluation in progress |
+| Status | Version 1 is the measured baseline; version 2 is implemented in the modular monolith; version 3 is future work |
 | Repository | <https://github.com/sifact/multi-agent-orchestration> (public) |
 | Source article | Microsoft ISE, "Orchestration Patterns for Multi-Agent Systems" (Lily Jia, 12 June 2026): <https://devblogs.microsoft.com/ise/coordinator-patterns-multi-agent-systems/> |
-| Companion | Project 2 (coordinators over agent microservices), a separate repository |
+| Roadmap | Version 1: router; version 2: modular-monolith coordinator; version 3: coordinator over agent microservices |
 | Last updated | 2026-11-02 |
 
 ## 1. Purpose
@@ -20,7 +26,7 @@ In the ISE article, a client's production chatbot used a **router pattern inside
 
 ISE later moved the client to coordinators over agent microservices, and found that the coordinator adds latency.
 
-This project rebuilds the **original** architecture faithfully, so that it can serve as a **measured baseline**. Project 2 will rebuild the same assistant with coordinators over microservices, using the same data and the same evaluation set. The two can then be compared fairly on:
+Version 1 rebuilds the **original** architecture faithfully as a **measured baseline**. Version 2 adds a coordinator in the same modular monolith. Version 3 is a future project that moves agents behind microservices. The versions use the same data and frozen test set so they can be compared on:
 
 * answer quality
 * routing
@@ -34,19 +40,22 @@ This project rebuilds the **original** architecture faithfully, so that it can s
 ### In scope
 
 * A question-answering assistant for **Contoso Aero Engines**, a fictional jet-engine maker that builds the CX-7 engine.
-* One intent-detection call, a lookup-table router, five agent modules and a refusal path.
+* Version 1: one intent-detection call, a lookup-table router, five agent modules and a refusal path.
+* Version 2: a planner, sequential dispatcher and optional synthesizer over the same five agent modules.
 * A reproducible dataset: real NASA telemetry, plus synthetic factory, fleet and document data linked to it.
-* A portable evaluation set and harness, which project 2 reuses unchanged.
+* A portable evaluation set and harness, reused unchanged across all three versions.
 * A command-line tool and a local browser playground for manual testing.
 
 ### Out of scope (non-goals)
 
-* Coordinators, fan-out, answer merging, microservices, a gateway, or cloud deployment. These belong to project 2.
+* Agent microservices, a gateway and cloud deployment. These are version 3 work; versions 1 and 2 remain a modular monolith.
 * Any real manufacturer's name or internal data. No defense or export-controlled content.
 * Real FAA airworthiness directives in the knowledge base. All 10 documents are synthetic.
 * Azure safety and red-team evaluators, which need an Azure project.
 
 ## 3. Architecture
+
+Version 1 keeps the original one-agent router:
 
 ```text
 question ─► intent detection (1 LLM call, 1 label)
@@ -62,11 +71,29 @@ question ─► intent detection (1 LLM call, 1 label)
                answer returned as-is (no merge, no second agent)
 ```
 
+Version 2 plans one to three steps in one model call, runs them sequentially through the route
+table, and synthesizes only when the plan has multiple steps:
+
+```text
+question ─► planner (1 LLM call)
+              │
+        unsupported ─► fixed refusal (no agent)
+              │
+          1 to 3 steps
+              ▼
+       sequential dispatcher ─► ROUTES ─► handle(question, context)
+              │                       └── prior findings for dependent steps
+              ▼
+       one step: return answer unchanged
+       multiple steps: synthesize from step answers, label sources and missing parts
+```
+
 | Component | Location | Responsibility |
 |---|---|---|
 | Intent detection | `routing/intent.py` | One model call that returns exactly one of `telemetry`, `service`, `production`, `quality`, `knowledge`, `unsupported`. Anything unparseable becomes `unsupported`. |
 | Router | `routing/router.py` | `ROUTES` dict from label to `handle()`; `unsupported` has no route and is refused. |
 | Pipeline graph | `routing/graph.py` | LangGraph `StateGraph`: intent node, then a conditional edge to one agent node or the refusal node. Times every stage. |
+| Coordinator | `coordination/` | Plans, validates, dispatches and synthesizes a bounded multi-agent run. Calls agents only through `ROUTES` and their existing `handle()` contract. |
 | Agent modules | `agents/<name>/` | Each exposes `handle(question, context) -> AgentReply`. |
 | Shared agent code | `agents/common/` | Plain-Python tool loop, the read-only SQL tool, and the `AgentContext` / `AgentReply` / `ToolStep` contract. |
 | Model client | `llm/client.py` | OpenAI-compatible chat client. Reports tokens, model time and rate-limit wait separately. |
@@ -74,7 +101,7 @@ question ─► intent detection (1 LLM call, 1 label)
 | Evaluation | `evaluation/` | Exact evaluators, Azure AI Evaluation SDK harness, runner and report. |
 | Interfaces | `cli.py`, `serving/` | Command line and the local browser playground. |
 
-**The router's limitation is intentional.** Questions that need two agents get a partial answer or a wrong one. That failure is the evidence project 2 exists to address, and it must not be "fixed" in this project.
+**Version 1's one-agent limitation is intentional and preserved.** Version 2 addresses questions needing multiple agents without changing version 1 behavior. Version 3 changes the deployment boundary, not the agent contract.
 
 ## 4. Functional requirements
 
@@ -112,8 +139,20 @@ question ─► intent detection (1 LLM call, 1 label)
 |---|---|
 | FR-16 | CLI: `uv run contoso-aero "question" [--json]`. |
 | FR-17 | Playground: `uv run contoso-aero-ui` serves `http://127.0.0.1:8010`. |
-| FR-18 | The playground offers router mode or a direct call to one agent. It shows the chosen agent, the answer, the per-stage time split (model vs. rate-limit wait), tokens and each tool call with its SQL and output. |
+| FR-18 | The playground offers Router (auto), Coordinator (v2, preview) or a direct call to one agent. It shows the selected mode, the answer, the per-stage time split (model vs. rate-limit wait), tokens and each tool call with its SQL and output. Coordinator mode shows numbered plan steps, each step's agent, answer and tools, plus synthesis when used. |
 | FR-19 | The playground binds to loopback only, runs one question at a time, limits requests to 4 KB and questions to 1,000 characters, and never returns the API key. |
+
+### Coordinator
+
+| ID | Requirement |
+|---|---|
+| FR-20 | One planner call returns either `unsupported` with no steps or a plan of one to three steps. Each step has an ID, a known agent, a self-contained question and dependencies on earlier steps. |
+| FR-21 | Plan parsing rejects unknown agents, too many steps, forward references, cycles and invalid structures. The planner retries invalid output only the configured number of times; an invalid plan after retries returns an error, never a v1 fallback. |
+| FR-22 | Dispatch is sequential and uses only `ROUTES` and `handle(question, context)`. A dependent step receives successful earlier answers as bounded "Findings so far" text. |
+| FR-23 | A failed step causes dependent steps to be skipped. Synthesis receives successful answers and missing-step details; the coordinator does not re-plan. |
+| FR-24 | A successful one-step plan returns the agent answer unchanged without synthesis. A multi-step plan uses one synthesis call, which uses only step answers, identifies each agent's contribution and states what could not be answered. |
+| FR-25 | An unsupported plan calls no agent and returns a refusal. Version 1 remains the default pipeline and retains its existing one-agent behavior. |
+| FR-26 | The evaluation runner accepts `--pipeline router|coordinator`, defaults to `router`, and writes coordinator runs to a distinct filename. |
 
 ## 5. Data requirements
 
@@ -132,12 +171,12 @@ Build command: `uv run python -m contoso_aero.data`. It needs `data/raw/cmapss/`
 
 ### Question set
 
-`data/eval/questions.jsonl` holds 59 questions, shared unchanged with project 2.
+`data/eval/questions.jsonl` holds 59 frozen test questions shared unchanged across all three versions.
 
 | Category | Count | Expectation for this baseline |
 |---|---:|---|
 | Single-agent | 24 | Router should route and answer correctly |
-| Multi-agent | 23 | Routing scores 0% by design; answers will mostly fail |
+| Multi-agent | 23 | Version 1 routing scores 0% by design; version 2 is scored against the expected agent set |
 | Unsupported | 12 | Must be refused |
 
 Each row records:
@@ -154,12 +193,12 @@ Each row records:
 
 | Set | File | Size | Role |
 |---|---|---:|---|
-| Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged with project 2 |
-| Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check the router |
+| Test set | `data/eval/questions.jsonl` | 59 | Frozen release gate, shared unchanged across all versions |
+| Routing dev set | `data/eval/routing_probe.jsonl` | 19 | Hand-written questions used to tune and check the version 1 router |
+| Coordination dev set | `data/eval/coordination_probe.jsonl` | 19 | Hand-written questions used to tune and check version 2 planning |
 
-* Prompts and agents are tuned only against the dev set. The test set is never edited to make a run pass.
-* A router fix counts only if the dev probe passes with repeats (`uv run python -m contoso_aero.evaluation.probe --repeat 3`) and the test set does not regress.
-* The dev set calls only intent detection, so a probe run costs a few thousand tokens instead of a full evaluation.
+* Prompts and agents are tuned only against the relevant dev set. Never edit the test set to make a run pass.
+* The router probe tests intent detection; the coordination probe tests planning only. Neither dispatches agents or runs the full evaluation.
 
 ### Metrics
 
@@ -171,6 +210,11 @@ Each row records:
 * latency per stage (intent, agent, total)
 * rate-limit wait
 * token counts
+* 95% Wilson confidence intervals next to each reported rate; rates on fewer than 30 cases are noisy, and overlapping intervals do not establish a change
+
+Version 1 routing uses its existing one-agent scoring rule. When version 2 supplies `predicted_agents`,
+routing passes only when the called-agent set matches the expected set; an empty expected set is a
+refusal with no agent called.
 
 **Indicative metrics (LLM judge):**
 
@@ -212,27 +256,27 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 
 | ID | Area | Requirement |
 |---|---|---|
-| NF-1 | Latency honesty | Every stage is timed by the project itself, not by framework callbacks. Rate-limit wait is recorded separately from model time, and comparisons with project 2 use model time. |
+| NF-1 | Latency honesty | Every stage is timed by the project itself, not by framework callbacks. Rate-limit wait is recorded separately from model time, and comparisons across versions use model time. |
 | NF-2 | Rate limits | 429s are retried using `Retry-After`, up to 8 times. A wait longer than 65 s means the daily quota is used up, so the run fails fast instead of stalling. |
 | NF-3 | Security | Keys come from the project's own git-ignored `.env` (`NL_SQL_BASE_URL`, `NL_SQL_API_KEY`, `NL_SQL_MODEL`, optional `NL_SQL_MODEL_TIMEOUT_SECONDS`). Real environment variables override the file. Keys are hidden from `repr` and never committed or logged. |
-| NF-4 | Module boundary | Agent modules never import each other. Only the router calls them, through `handle()`. Tests enforce this, so in project 2 extracting a module means only wrapping `handle()` in a service. |
-| NF-5 | Framework boundary | LangGraph is used for the router graph only. Agent modules import no LangGraph or LangChain code (enforced by a test). |
+| NF-4 | Module boundary | Agent modules never import each other. Router and coordinator calls go through `ROUTES` and `handle()`. Tests enforce the boundary, which keeps the contract usable by a future service adapter. |
+| NF-5 | Framework boundary | LangGraph wires the router and coordinator graphs. Agent modules import no LangGraph or LangChain code (enforced by a test). |
 | NF-6 | Reproducibility | A fixed seed, a fixed snapshot date, a pinned SDK and a recorded `uv.lock`. |
-| NF-7 | Code structure | `src/contoso_aero/` is split into stage sub-packages, one responsibility per file, with public APIs exported from `__init__.py`. Configuration lives in `config.py`. |
+| NF-7 | Code structure | `src/contoso_aero/` is split into stage sub-packages, including `routing/` and `coordination/`, with one responsibility per file and public APIs exported from `__init__.py`. Configuration lives in `config.py`. |
 | NF-8 | Module guides | Every core module has `guide/<module>.md`: an H1 file name, a one-line summary, then exactly 5 bullets. A test enforces this, and the guides are kept in sync with the code. |
-| NF-9 | Tests | `pytest` with a scripted fake model (no network) and given/when/then names. `ruff` with line length 100. Currently 57 tests pass. |
+| NF-9 | Tests | `pytest` uses scripted fake models for offline behavior checks and given/when/then names. `ruff` enforces a 100-character line length. |
 | NF-10 | Repository | This project is its own repository with its own `.venv`, `.env` and `.copilot-tracking/` (git-ignored). It shares nothing with `nl-to-sql`. |
 
 ## 8. Technology decisions
 
 | Decision | Choice | Why |
 |---|---|---|
-| Pattern | Router in a modular monolith, one agent per question | Faithful copy of the client's original system, as the baseline |
+| Pattern | Version 1: router in a modular monolith; version 2: coordinator in that monolith; version 3: coordinator over agent microservices | Measures routing, coordination and deployment-boundary trade-offs separately |
 | Brand | Contoso Aero Engines | Microsoft's standard fictional company; implies no real manufacturer |
 | Telemetry | NASA C-MAPSS FD003 | Real data, 100 engines, two fault modes that support two factory stories |
 | Language and tooling | Python 3.11+, `uv`, `pytest`, `ruff` | Matches the sibling `nl-to-sql` project |
-| Router framework | LangGraph `StateGraph`, routing only | Clear graph for the router; agents stay portable for project 2 |
-| Agent loop | Plain Python | No framework to carry into microservices; full control of timing |
+| Graph framework | LangGraph `StateGraph` for the router and coordinator | Explicit orchestration graphs while keeping agent modules framework-free |
+| Agent loop | Plain Python | Keeps agents portable to a future microservice adapter and gives full control of timing |
 | Storage | SQLite with a read-only authorizer per agent | Simple, local, enforces table ownership |
 | Retrieval | BM25 over Markdown documents | Simple and transparent at 10 documents |
 | Model | `openai/gpt-oss-120b` via Groq, OpenAI-compatible | Same endpoint as `nl-to-sql`; free tier |
@@ -245,16 +289,16 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 
 | Area | Status |
 |---|---|
-| Dataset, agents, router, CLI | Done |
-| Browser playground | Done and tested in the browser |
-| Evaluation harness | Done; day 1 complete |
-| Day-2 judge run | Pending |
-| Results write-up | Pending |
-| Routing-gap fix | Planned (Copilot prompt prepared); not yet applied |
-| Code review of agents and router | Pending |
-| Deployment | None (local only) |
+| Version 1 dataset, agents, router and CLI | Done |
+| Version 1 browser playground and measured baseline | Done |
+| Version 2 planner, sequential dispatcher, synthesis and evaluation wiring | Implemented |
+| Version 2 browser preview | Implemented and browser-checked |
+| Version 2 planner probe and repository validation | Passed: 19/19 dev cases on three repeats; 98 offline tests and ruff checks passed |
+| Judge runs and full version 2 evaluation | Not run as part of the coordinator implementation |
+| Version 3 microservice deployment | Future work |
+| Deployment | No hosted deployment for the coordinator |
 
-### Day-1 baseline (run `20261030T143443Z`, exact checks, 59 questions, 0 errors)
+### Initial V1 baseline before routing-gap fixes (run `20261030T143443Z`, exact checks, 59 questions, 0 errors)
 
 | Category | Routing | Answers correct | Refusals | Mean total time |
 |---|---:|---:|---:|---:|
@@ -268,54 +312,39 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 
 ## 10. Known issues
 
-### Single-agent routing gaps (not the intended limit; to be fixed)
+### Historical version 1 single-agent gaps (fixed)
 
-The router sees only the question and one line per label. It never sees the tables or documents each agent owns, so it decides from wording.
+The first baseline exposed gaps that were not the intended one-agent limitation:
 
-1. **Missing descriptions.**
-   * Telemetry owns the fleet tables, but its description only mentions sensor readings, and the prompt never says that Contoso's customers are airlines.
-   * A question that names an airline therefore looks like a question about another company and is refused. "How many active engines operate?" routes correctly. "How many active engines does Northwind Air operate?" is refused. It routes correctly only when it says "in our fleet".
-   * Affected: Q004 (refused) and Q003 (sent to service).
-2. **Overlapping descriptions.** Questions about what a procedure, limit or term says are routed by their topic words instead:
-   * Q021 says "borescope" and goes to service.
-   * Q023 says "T50" and goes to telemetry.
-   * Q024 says "disposition" and goes to quality.
-
-   All three should go to knowledge.
-
-**Fix plan:**
-
-* Describe each agent by everything it owns.
-* State that Contoso's fleet is made of customer airlines.
-* Add one general tie-break rule: questions about what a rule, limit or term says go to knowledge.
-* Add no question-specific wording, and add a test that rejects eval IDs and airline names in the prompt.
-* Check the fix on a held-out set of new probe questions.
-* Rerun day 1 as `baseline-exact-v2` and report before/after. Expect unsupported to stay at 100% and multi routing at 0%.
-
-### Q011: data visibility, not routing
-
-The question was routed correctly. The answer said `P1` because the production agent only sees `plant_id`, while the plant names exist only in `data/reference.py` and one knowledge document. The fix is to add the plant names (built from `data/reference.py`) to the production agent's notes.
+The router descriptions were expanded to cover owned data domains and to distinguish explanatory
+questions for the knowledge agent from questions about specific records. Production notes now
+include plant names derived from the reference data. These changes improved version 1 without
+adding labels, multi-agent routing or fallbacks.
 
 ### Other notes
 
 * The judge model once returned invalid JSON on a refusal row (HTTP 400). That row is excluded from groundedness anyway. Judge runs use `fail_on_evaluator_errors=False`.
 * Some ambiguity is inherent. A question like "Has engine X passed the T50 alert limit?" needs both telemetry and knowledge. That is the intended limit, not something a prompt can fix.
 
-## 11. Contract with project 2
+## 11. Cross-version contract
 
-Project 2 must reuse, unchanged:
+All versions reuse unchanged:
 
-* `data/eval/questions.jsonl` and the scoring rules (evaluators, tolerances, fact normalisation).
+* `data/eval/questions.jsonl` and the scoring rules (evaluators, tolerances and fact normalisation).
 * The dataset build (same seed and snapshot date), so answers match.
-* The agent modules, wrapped as services through `handle(question, context) -> AgentReply`.
-* The same model endpoint and the same rate-limit accounting, so latency compares model time with model time.
+* The five agent modules and their `handle(question, context) -> AgentReply` contract.
+* Model-call and rate-limit accounting, so latency comparisons use model time consistently.
 
-Project 2 is expected to improve multi-agent routing and answers, at the cost of extra coordinator latency. That trade-off is what the comparison measures.
+Version 2 adds multi-agent planning and answer synthesis while preserving version 1's router
+behavior and default. Agents remain framework-free and do not import each other. The coordinator
+calls them only through `ROUTES`; a future version 3 service adapter must preserve the same
+`handle()` boundary. Version 3 is expected to add deployment isolation, not to change the agent
+contract.
 
 ## 12. Remaining work
 
-1. Apply the routing-gap fix and the Q011 plant-name fix, then rerun day 1 (`baseline-exact-v2`).
-2. Run the day-2 judge sample on a day with a fresh token quota.
-3. Write up the baseline results with their caveats: rate-limit-dominated latency, multi-agent failures as expected evidence, and same-model judge bias.
-4. Review the agent and router code.
-5. Update the README with the headline numbers.
+The version 2 implementation is complete. The planner dev probe matched the expected agent sets
+for all 19 questions on three repeats, and offline tests and ruff checks passed. The 59-question
+full evaluation is intentionally not part of implementation validation. Future evaluation work
+includes running the frozen release gate and, if model budget permits, the seeded judge sample.
+Version 3 remains a separate future project.
