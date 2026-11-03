@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..agents.common import AgentContext, AgentReply
 from ..routing.router import ROUTES
 from .config import CoordinatorSettings
 from .plan import Plan, PlanStep
+from .text import clean_model_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def dispatch_plan(
         started = time.perf_counter()
         try:
             reply = ROUTES[step.agent](sub_question, context)
+            reply = replace(reply, answer=clean_model_text(reply.answer))
         except Exception as error:
             logger.exception("Coordinator agent step %s (%s) raised an error.",
                              step.id, step.agent)

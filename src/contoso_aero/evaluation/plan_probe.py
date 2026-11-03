@@ -13,6 +13,8 @@ from ..coordination import CoordinatorSettings, Plan, plan_question
 from ..llm import ChatCompletionClient, ModelClient, ModelError
 from ..routing.router import ROUTES
 
+INVALID_PLAN = "invalid plan"
+
 
 @dataclass(frozen=True, slots=True)
 class ProbeItem:
@@ -29,6 +31,7 @@ class ProbeResult:
 
     item: ProbeItem
     planned_agents: tuple[tuple[str, ...], ...]
+    unusable_replies: tuple[str, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -80,12 +83,19 @@ def run_probe(
     results: list[ProbeResult] = []
     for item in items:
         observations: list[tuple[str, ...]] = []
+        unusable: list[str] = []
         for _ in range(repeat):
             result = plan_question(item.question, model, settings)
-            if result.error or result.plan is None:
+            if result.invalid_reply is not None:
+                # The model answered but not with a valid plan: that is a failure of this
+                # question, so record it and keep probing instead of discarding the run.
+                observations.append((INVALID_PLAN,))
+                unusable.append(result.invalid_reply)
+            elif result.error or result.plan is None:
                 raise ModelError(result.error or f"Planner produced no plan for {item.id}.")
-            observations.append(_planned_agents(result.plan))
-        results.append(ProbeResult(item, tuple(observations)))
+            else:
+                observations.append(_planned_agents(result.plan))
+        results.append(ProbeResult(item, tuple(observations), tuple(unusable)))
     return results
 
 
@@ -98,6 +108,10 @@ def format_results(results: list[ProbeResult]) -> str:
         observed = "; ".join(", ".join(agents) or "none" for agents in result.planned_agents)
         lines.append(f"| {result.item.id} | {expected} | {observed} | "
                      f"{'pass' if result.passed else 'FAIL'} |")
+    unusable = [(r.item.id, reply) for r in results for reply in r.unusable_replies]
+    if unusable:
+        lines.extend(["", "Unusable planner replies (no valid plan after one retry):"])
+        lines.extend(f"* {item_id}: {reply[:200]!r}" for item_id, reply in unusable)
     passed = sum(result.passed for result in results)
     lines.extend(["", f"{passed}/{len(results)} passed."])
     return "\n".join(lines)

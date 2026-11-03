@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ..llm import ModelClient, ModelError
 from .dispatch import StepExecution
 from .plan import Plan
+from .text import clean_model_text
 
 SYNTHESIS_PROMPT = """\
 You synthesize a Contoso Aero Engines answer from coordinator step results.
@@ -66,7 +67,7 @@ def synthesize(
     except ModelError as error:
         return SynthesisResult(answer="", error=str(error))
     return SynthesisResult(
-        answer=response.content or "",
+        answer=clean_model_text(response.content or ""),
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         model_seconds=response.model_seconds,

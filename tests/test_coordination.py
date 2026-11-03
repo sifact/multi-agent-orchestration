@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -18,8 +19,10 @@ from contoso_aero.coordination import (
     plan_question,
 )
 from contoso_aero.coordination import dispatch as dispatch_module
+from contoso_aero.coordination.text import clean_model_text
 from contoso_aero.evaluation.plan_probe import load_probe
-from contoso_aero.llm import ModelResponse
+from contoso_aero.evaluation.plan_probe import main as probe_main
+from contoso_aero.llm import ModelError, ModelResponse
 from contoso_aero.routing import REFUSAL, ask
 from contoso_aero.routing.intent import LABELS
 
@@ -121,7 +124,18 @@ def test_given_shipped_coordinator_probe_when_loaded_then_rows_cover_pairs_chain
 
     assert len(items) >= 18
     assert {frozenset(item.expected_agents) for item in pair_rows} == expected_pairs
-    assert len(triple_rows) >= 3 and len(single_rows) == 3 and len(unsupported_rows) == 3
+    assert len(triple_rows) >= 3 and len(single_rows) >= 3 and len(unsupported_rows) >= 3
+
+
+def test_given_shipped_dev_set_when_entities_counted_then_no_engine_dominates() -> None:
+    items = load_probe(DataSettings().coordination_probe_path)
+    counts: dict[str, int] = {}
+    for item in items:
+        for serial in set(re.findall(r"CX7-\d{5}", item.question)):
+            counts[serial] = counts.get(serial, 0) + 1
+
+    assert len(counts) >= 6
+    assert max(counts.values()) <= 0.4 * len(items)
 
 
 def test_given_shipped_dev_set_when_compared_to_frozen_test_set_then_questions_do_not_overlap() -> None:
@@ -297,3 +311,93 @@ def test_given_v1_and_coordinator_unsupported_when_called_then_refusal_behavior_
     assert (v1.refused, v1.answer, v1.agents_called) == (
         v2.refused, v2.answer, v2.agents_called
     )
+
+
+def test_given_lookalike_typography_when_cleaned_then_plain_characters_remain() -> None:
+    dirty = "engine\u202fCX7\u2011\u200b10041 \u00a0lot HCB\u20112503 \u3010production\u3011 \u221212"
+
+    assert clean_model_text(dirty) == "engine CX7-10041  lot HCB-2503 [production] -12"
+
+
+def test_given_lookalike_hyphens_in_a_finding_when_next_step_runs_then_ids_are_plain_ascii(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = PlanModel(_plan_json(
+        _step("first", "production", "Which lot is fitted?", []),
+        _step("second", "quality", "Is that lot quarantined?", ["first"]),
+    ), "Merged answer.")
+    questions: list[str] = []
+    monkeypatch.setitem(dispatch_module.ROUTES, "production", lambda question, context: AgentReply(
+        agent="production", answer="The lot is HCB\u20112503\u2011110."))
+
+    def quality_handler(question: str, context: AgentContext) -> AgentReply:
+        questions.append(question)
+        return AgentReply(agent="quality", answer="No quarantine.")
+
+    monkeypatch.setitem(dispatch_module.ROUTES, "quality", quality_handler)
+
+    ask_coordinated("Which lot, and is it quarantined?", _context(model))  # type: ignore[arg-type]
+
+    assert "HCB-2503-110" in questions[0] and "\u2011" not in questions[0]
+
+
+def test_given_lookalike_typography_in_merged_answer_when_coordinated_then_answer_is_cleaned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = PlanModel(_plan_json(
+        _step("first", "service", "Why was it removed?", []),
+        _step("second", "production", "Which plant built it?", []),
+    ), "Engine\u202fCX7\u201110041 was removed \u3010service\u3011.")
+    for name in ("service", "production"):
+        monkeypatch.setitem(dispatch_module.ROUTES, name, lambda question, context, n=name:
+                            AgentReply(agent=n, answer=f"{n} answer"))
+
+    result = ask_coordinated("Why removed and where built?", _context(model))  # type: ignore[arg-type]
+
+    assert result.answer == "Engine CX7-10041 was removed [service]."
+
+
+def test_given_invalid_reply_after_retry_when_planned_then_error_shows_what_the_model_said() -> None:
+    model = PlanModel("Sure! Here is the plan you asked for.", "")
+
+    result = plan_question("Combine two data domains.", model)  # type: ignore[arg-type]
+
+    assert result.plan is None
+    assert result.invalid_reply == ""
+    assert result.error and "reply was" in result.error
+
+
+class _FailingModel:
+    def complete(self, messages, tools=()):
+        raise ModelError("Model endpoint returned HTTP 503.")
+
+
+def _probe_file(tmp_path: Path, *rows: tuple[str, list[str], str]) -> Path:
+    path = tmp_path / "probe.jsonl"
+    path.write_text("".join(json.dumps({"id": i, "expected_agents": a, "question": q}) + "\n"
+                            for i, a, q in rows))
+    return path
+
+
+def test_given_one_unusable_reply_when_probed_then_that_question_fails_and_run_continues(
+    tmp_path, capsys
+) -> None:
+    path = _probe_file(tmp_path, ("C1", ["telemetry"], "First?"), ("C2", ["service"], "Second?"))
+    model = PlanModel("rambling", "still rambling",
+                      _plan_json(_step("s1", "service", "Second?", [])))
+
+    code = probe_main(["--file", str(path)], model=model)  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "| C1 | telemetry | invalid plan | FAIL |" in out
+    assert "| C2 | service | service | pass |" in out
+    assert "1/2 passed." in out and "rambling" in out
+
+
+def test_given_endpoint_failure_when_probed_then_run_still_aborts_with_exit_code_two(
+    tmp_path,
+) -> None:
+    path = _probe_file(tmp_path, ("C1", ["telemetry"], "First?"))
+
+    assert probe_main(["--file", str(path)], model=_FailingModel()) == 2  # type: ignore[arg-type]

@@ -8,6 +8,7 @@ from typing import Literal
 
 from ..routing.router import ROUTES
 from .config import CoordinatorSettings
+from .text import clean_model_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,7 @@ def parse_plan(raw: str, settings: CoordinatorSettings | None = None) -> Plan:
             raise ValueError("A step cannot depend on the same step twice.")
         if any(dependency not in seen_ids for dependency in dependencies):
             raise ValueError("Each dependency must name an earlier step.")
-        steps.append(PlanStep(step_id, agent, question.strip(), tuple(dependencies)))
+        steps.append(PlanStep(step_id, agent, clean_model_text(question).strip(),
+                             tuple(dependencies)))
         seen_ids.add(step_id)
     return Plan(status="plan", steps=tuple(steps))
