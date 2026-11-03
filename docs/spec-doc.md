@@ -9,7 +9,7 @@ over agent microservices.
 | Repository | <https://github.com/sifact/multi-agent-orchestration> (public) |
 | Source article | Microsoft ISE, "Orchestration Patterns for Multi-Agent Systems" (Lily Jia, 12 June 2026): <https://devblogs.microsoft.com/ise/coordinator-patterns-multi-agent-systems/> |
 | Roadmap | Version 1: router; version 2: modular-monolith coordinator; version 3: coordinator over agent microservices |
-| Last updated | 2026-11-02 |
+| Last updated | 2026-11-03 |
 
 ## 1. Purpose
 
@@ -290,9 +290,10 @@ Render a report with `uv run python -m contoso_aero.evaluation.report <run.json>
 | Version 2 planner, sequential dispatcher, synthesis and evaluation wiring | Implemented |
 | Version 2 browser preview | Implemented; checked in a real browser against real model answers on desktop and phone widths, in both themes |
 | Version 2 real-model answers | Five hand-written questions run end to end (three multi-agent, one single-agent, one refusal); every answer matched the database |
-| Version 2 planner probe | The first 19 dev cases passed on three repeats. Of the 11 cases added later, 10 passed on three repeats and the one unstable case (C23) passed 5/5 after a planner prompt clarification. **Pending:** one full 30-case, three-repeat run after that clarification, which was blocked by the free-tier token limit |
+| Version 2 planner probe | 26/30 cases passed on three repeats; C06, C10, C13 and C22 failed. No prompt or dev-set changes were made during measurement |
 | Repository validation | 108 offline tests and ruff checks pass |
-| Judge runs and full version 2 evaluation | Not run as part of the coordinator implementation |
+| Version 2 frozen-set gate | Attempted all 59 cases on 2026-11-03; Q036-Q059 recorded endpoint quota errors. The judge batch timed out. This is not a complete release result |
+| Version 1 on the V2 model | Not run; the V2 attempt exhausted the model's daily token budget |
 | Version 3 microservice deployment | Future work |
 | Deployment | No hosted deployment for the coordinator |
 
@@ -341,14 +342,18 @@ contract.
 
 ## 12. Remaining work
 
-The version 2 implementation is complete and has been exercised on real model answers.
+The version 2 implementation is complete and has been exercised on real model answers, but its
+full frozen-set release gate has not completed successfully.
 
-1. Re-run the full planner probe once the free-tier token limit resets, to confirm that the
-   planner prompt clarification did not change any of the 19 earlier cases:
-   `uv run python -m contoso_aero.evaluation.plan_probe --repeat 3`.
-2. Run the frozen 59-question release gate for version 2 with `--pipeline coordinator`, then the
-   seeded judge sample if model budget permits. This is deliberately not done yet, so no version 2
-   result is published on the About page.
-3. Redeploy the hosted demo so it includes the coordinator preview. It still runs version 1 only.
+1. Re-run the 59-question coordinator gate after the model quota is available. The 2026-11-03
+   attempt recorded quota errors for Q036-Q059 and cannot support final V2 metrics.
+2. Run the router on the same model if budget permits. The available V1 reference uses
+   `gpt-oss-120b`; it is not directly comparable to the V2 attempt on `gpt-oss-20b`.
+3. Rerun the full three-repeat planner probe after quota is available; the latest result was
+   26/30, with C06, C10, C13 and C22 failing.
+4. Redeploy the hosted demo so it includes the coordinator preview. It still runs version 1 only.
+
+The attempt details and the completed V1 reference are recorded in [the V2 evaluation status](v2-evaluation.md).
+No V2 performance or answer-quality result is published on the About page.
 
 Version 3 remains a separate future project.

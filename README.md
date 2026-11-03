@@ -107,3 +107,8 @@ separate filename so it cannot overwrite a router run.
 The runner writes per-question JSON with exact routing accuracy, answer facts and numeric tolerances,
 correct refusals, intent/agent/total latency, rate-limit wait, tool calls and token counts. The report
 writes `data/eval/runs/latest.md`. Run outputs are local evaluation artifacts and are ignored by Git.
+
+The latest V2 gate attempt hit the model's daily token quota: 24 of 59 case records contain errors,
+so its provisional percentages are not a release result. The planner probe passed 26/30 cases.
+See [the V2 evaluation status](docs/v2-evaluation.md) for the failed probe cases, quota details and
+the completed V1 reference; rerun the full gate after quota is available.
