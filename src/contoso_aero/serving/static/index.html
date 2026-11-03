@@ -385,7 +385,7 @@
   <div class="brand">
     <h1>Contoso Aero Engines</h1>
     <p><span class="tagline">Ask about jet engines in plain English</span>
-      <a class="version" href="#roadmap" title="See all three versions">v1 of 3 · Router</a></p>
+      <a class="version" href="#roadmap" title="See all three versions">v1 live · v2 preview</a></p>
   </div>
   <div class="head-right">
     <nav class="tabs" aria-label="Views">
@@ -419,7 +419,7 @@
 
     <section class="card" id="pipeline-card">
       <h2 class="eyebrow">Pipeline</h2>
-      <p class="sub">v1 sends each question to exactly one agent. Questions that need several agents arrive in <a href="#roadmap">v2</a>.</p>
+      <p class="sub">v1 sends each question to exactly one agent. For questions that need several agents, switch to <b>Coordinator (v2, preview)</b> above or read about <a href="#roadmap">v2</a>.</p>
       <div class="pipeline">
         <div class="node" id="n-intent"><small>Intent detection</small><strong id="intent-label">—</strong><span class="t" id="intent-t"></span></div>
         <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
@@ -429,15 +429,15 @@
       </div>
     </section>
 
-    <section class="card hidden" id="coordinator-card">
-      <h2 class="eyebrow">Coordinator plan</h2>
-      <p class="sub">The coordinator plans and runs steps one at a time, then combines multi-step answers.</p>
-      <div id="coord-plan" class="coord-plan"><p class="empty">Run a question to see its plan.</p></div>
-    </section>
-
     <section class="card" id="answer-card">
       <h2 class="eyebrow">Answer <span id="answer-tag"></span><span class="spacer"></span><button class="btn-ghost hidden" id="copy">Copy</button></h2>
       <div id="answer" class="answer" aria-live="polite"><div class="placeholder">Pick a sample question or type your own.</div></div>
+    </section>
+
+    <section class="card hidden" id="coordinator-card">
+      <h2 class="eyebrow">Coordinator plan</h2>
+      <p class="sub">How the answer was built: the coordinator plans, runs each step in order, then combines the results.</p>
+      <div id="coord-plan" class="coord-plan"><p class="empty">Run a question to see its plan.</p></div>
     </section>
 
     <section class="card hidden" id="cost-card">
@@ -569,7 +569,7 @@
         </dl>
       </article>
       <article class="vc">
-        <div class="vc-top"><span class="vc-num">v2</span><span class="tag" style="--c:var(--brand)">Next</span></div>
+        <div class="vc-top"><span class="vc-num">v2</span><span class="tag" style="--c:var(--brand)">Preview · try it</span></div>
         <h3>Team of specialists</h3>
         <p class="vc-sum">Several specialists work together on one question.</p>
         <svg class="arch" viewBox="0 0 260 150" role="img" aria-label="A question goes to a coordinator, which works with two specialists and combines their findings, all inside one application.">
@@ -596,6 +596,7 @@
           <div><dt>Built as</dt><dd>Still one application, so it's as simple to run and deploy as v1.</dd></div>
           <div><dt>Best at</dt><dd>Questions that cross areas, such as linking an engine removal to the factory parts behind it.</dd></div>
           <div><dt>Trade-off</dt><dd>More AI calls per question, so answers take longer and cost more. We'll measure exactly how much.</dd></div>
+          <div><dt>Status</dt><dd>Built and available in the playground as <b>Coordinator (v2, preview)</b>. Not yet scored on the test questions, so no results are shown here.</dd></div>
         </dl>
       </article>
       <article class="vc">
@@ -695,7 +696,7 @@
 
 <footer class="foot">
   <span>Contoso Aero Engines is a fictional company. Engine sensor data comes from NASA's C-MAPSS dataset.</span>
-  <a href="#roadmap">Version 1 of 3 · see the roadmap</a>
+  <a href="#roadmap">v1 live · v2 preview · see the roadmap</a>
 </footer>
 
 <script>
@@ -716,7 +717,7 @@ const SAMPLES = [
   { group: "Knowledge", c: "knowledge", qs: [
     "What does service bulletin SB-CX7-72-0042 require operators to do?",
     "What is the minimum fan blade root coating thickness?" ] },
-  { group: "Multi-agent", note: "needs v2", c: "warn", qs: [
+  { group: "Multi-agent", note: "best in Coordinator (v2)", c: "warn", qs: [
     "Which removed engines were built with fan blade lot FBL-2501-117, and why were they removed?",
     "Is engine CX7-10025's removal covered by a service bulletin?" ] },
   { group: "Unsupported", note: "should refuse", c: "unsupported", qs: [
@@ -818,7 +819,7 @@ function renderHistory() {
     <button data-i="${i}" title="${esc(h.question)}">
       <span class="q">${esc(h.question)}</span>
       <span class="m"><span class="tag" style="--c:${color(h.refused ? "unsupported" : h.label)}">${esc(h.refused ? "refused" : h.label)}</span>
-        ${h.mode === "router" ? "router" : "direct"} · ${secs(h.timing.total)}s</span>
+        ${h.mode === "router" ? "router" : h.mode === "coordinator" ? "v2" : "direct"} · ${secs(h.timing.total)}s</span>
     </button>`).join("");
 }
 function saveHistory() {
@@ -883,13 +884,13 @@ function errorHtml(message) {
 }
 
 /* ---------- result ---------- */
-function traceCallHtml(s, i) {
+function traceCallHtml(s, i, open = i < 3) {
   const sql = typeof s.arguments?.sql === "string" ? s.arguments.sql : null;
   const args = sql ? `<pre class="code">${highlightSql(sql)}</pre>`
     : `<pre class="code">${esc(JSON.stringify(s.arguments, null, 2))}</pre>`;
   const peek = sql ? sql.replace(/\s+/g, " ") : Object.values(s.arguments || {}).join(" · ");
   const failed = /^Error:/.test(s.output);
-  return `<details class="step${failed ? " err" : ""}"${i < 3 ? " open" : ""}>
+  return `<details class="step${failed ? " err" : ""}"${open ? " open" : ""}>
     <summary><span class="n">${i + 1}</span><span class="tool">${esc(s.tool)}</span>
       <span class="peek">${esc(peek)}</span><span class="chev">›</span></summary>
     <div class="step-body"><div><label>${sql ? "SQL" : "Arguments"}</label>${args}</div>
@@ -924,7 +925,7 @@ function renderCoordinator(r) {
         : '<p class="coord-answer empty">No answer was returned.</p>';
     const calls = outcome?.tool_calls || [];
     const tools = calls.length
-      ? calls.map((call, i) => traceCallHtml(call, i)).join("")
+      ? calls.map((call, i) => traceCallHtml(call, i, false)).join("")
       : '<p class="empty">No tool calls.</p>';
     return `<article class="coord-step${stateClass}" style="--c:${color(step.agent)}">
       <h3><span class="n">${index + 1}</span><span class="agent-name">${esc(step.agent)}</span>
@@ -937,7 +938,7 @@ function renderCoordinator(r) {
   });
   if (plan.steps.length > 1) {
     const synthesis = r.answer
-      ? `<div class="coord-answer answer">${markdown(r.answer)}</div>`
+      ? '<p class="coord-meta">Merged the step answers above into the final answer shown at the top.</p>'
       : `<div class="coord-answer">${errorHtml(r.error || "Synthesis returned no answer.")}</div>`;
     steps.push(`<article class="coord-step synthesis">
       <h3><span class="n">${plan.steps.length + 1}</span>
@@ -1035,7 +1036,7 @@ async function ask(question) {
   // On one column the pipeline and answer sit below the fold, so bring them into view.
   if (oneColumn()) {
     $("question").blur();
-    $("pipeline-card").scrollIntoView({ behavior: scrollMode(), block: "start" });
+    $(mode === "coordinator" ? "answer-card" : "pipeline-card").scrollIntoView({ behavior: scrollMode(), block: "start" });
   } else if (window.scrollY > 120) {
     window.scrollTo({ top: 0, behavior: scrollMode() });
   }
