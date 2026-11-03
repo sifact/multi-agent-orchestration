@@ -160,6 +160,7 @@
              background: color-mix(in srgb, var(--c) 16%, var(--bg-2));
              box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent); }
   .lane.on .swatch { opacity: 1; }
+  .lane .ord { font: 600 11px var(--mono); color: var(--c); margin-right: 5px; }
   .lane.pulse { animation: lanepulse 1.4s ease-in-out infinite; }
   @keyframes lanepulse { 50% { color: var(--muted); border-color: var(--line-2); } }
   @media (max-width: 720px) {
@@ -419,11 +420,11 @@
 
     <section class="card" id="pipeline-card">
       <h2 class="eyebrow">Pipeline</h2>
-      <p class="sub">v1 sends each question to exactly one agent. For questions that need several agents, switch to <b>Coordinator (v2, preview)</b> above or read about <a href="#roadmap">v2</a>.</p>
+      <p class="sub" id="pipeline-sub"></p>
       <div class="pipeline">
-        <div class="node" id="n-intent"><small>Intent detection</small><strong id="intent-label">—</strong><span class="t" id="intent-t"></span></div>
+        <div class="node" id="n-intent"><small id="n-intent-title">Intent detection</small><strong id="intent-label">—</strong><span class="t" id="intent-t"></span></div>
         <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
-        <div class="node"><small>Router</small><strong>lookup table</strong></div>
+        <div class="node"><small id="n-route-title">Router</small><strong id="n-route-label">lookup table</strong><span class="t" id="n-route-t"></span></div>
         <div class="arrow to-lanes" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
         <div class="lanes" id="lanes"></div>
       </div>
@@ -776,7 +777,14 @@ function renderModes() {
   $("modes").innerHTML = items.map((m) => m === "sep" ? '<span class="mode-sep"></span>' :
     `<button class="mode" style="--c:${m.c}" data-mode="${m.id}" aria-pressed="${m.id === mode}">
        <span class="swatch"></span>${esc(m.label)}</button>`).join("");
-  $("pipeline-card").classList.toggle("hidden", mode === "coordinator");
+  const coord = mode === "coordinator";
+  $("n-intent-title").textContent = coord ? "Planner" : "Intent detection";
+  $("pipeline-sub").innerHTML = coord
+    ? "v2 plans up to 3 steps, runs them in order (later steps can use earlier answers), then merges the results. Highlighted agents ran, numbered in order."
+    : 'v1 sends each question to exactly one agent. For questions that need several agents, switch to <b>Coordinator (v2, preview)</b> above or read about <a href="#roadmap">v2</a>.';
+  $("n-route-title").textContent = coord ? "Dispatch" : "Router";
+  $("n-route-label").textContent = coord ? "steps in order" : "lookup table";
+  $("n-route-t").textContent = "";
   $("coordinator-card").classList.toggle("hidden", mode !== "coordinator");
   $("mode-hint").textContent = mode === "router"
     ? "The router picks one agent for you."
@@ -785,13 +793,17 @@ function renderModes() {
       : `Skips the router and asks the ${mode} agent directly.`;
 }
 function renderLanes(active, pending) {
+  // `active` is one lane name, or the ordered list of agents a plan ran.
   const lanes = [...AGENTS, "unsupported"];
+  const ran = Array.isArray(active) ? active : [active];
   $("lanes").innerHTML = lanes.map((a) => {
-    const on = a === active ? " on" : "";
+    const order = ran.indexOf(a);
+    const on = order >= 0 ? " on" : "";
     const pulse = pending && (mode === "router" || mode === "coordinator" || a === mode)
       ? " pulse" : "";
     const label = a === "unsupported" ? "refuse" : a;
-    return `<span class="lane${on}${pulse}" style="--c:${color(a)}"><span class="swatch"></span>${label}</span>`;
+    const num = order >= 0 && ran.length > 1 ? `<b class="ord">${order + 1}</b>` : "";
+    return `<span class="lane${on}${pulse}" style="--c:${color(a)}"><span class="swatch"></span>${num}${label}</span>`;
   }).join("");
 }
 function renderSuggestions() {
@@ -955,11 +967,22 @@ function showResult(r) {
   const intent = r.intent;
   renderCoordinator(r);
   $("n-intent").classList.remove("pulse");
-  $("n-intent").classList.toggle("skipped", r.mode !== "router");
+  $("n-intent").classList.toggle("skipped", r.mode !== "router" && r.mode !== "coordinator");
   $("intent-label").textContent = r.mode === "coordinator" ? "planner"
     : r.mode !== "router" ? "skipped (direct)" : (intent ? intent.label : "error");
   $("intent-t").textContent = r.mode === "router" && intent ? `${secs(r.timing.intent)}s` : "";
-  renderLanes(r.error && !intent && r.mode === "router" ? null : label, false);
+  if (r.mode === "coordinator") {
+    const ranAgents = [...new Set((r.plan?.steps || []).map((s) => s.agent))]
+      .filter((a) => (r.coordination_steps || []).some((o) => o.agent === a && o.status !== "skipped"));
+    renderLanes(r.refused ? "unsupported" : ranAgents, false);
+    const multi = (r.plan?.steps || []).length > 1;
+    $("n-route-label").textContent = r.refused ? "nothing to run"
+      : `${(r.plan?.steps || []).length} step${(r.plan?.steps || []).length === 1 ? "" : "s"} in order`;
+    $("n-route-t").textContent = multi ? `+ merge ${secs(r.timing.synthesis)}s` : "";
+    $("intent-t").textContent = `${secs(r.timing.intent)}s`;
+  } else {
+    renderLanes(r.error && !intent && r.mode === "router" ? null : label, false);
+  }
 
   const tagText = r.error ? "error" : r.refused ? "refused"
     : r.mode === "coordinator" ? "coordinator" : `${r.label} agent`;
@@ -1024,8 +1047,8 @@ async function ask(question) {
   if (!question || timer) return;
   $("ask").disabled = true; $("ask").classList.add("busy"); $("ask-label").textContent = "Working";
   $("answer-tag").innerHTML = ""; $("copy").classList.add("hidden");
-  $("n-intent").classList.toggle("pulse", mode === "router");
-  $("n-intent").classList.toggle("skipped", mode !== "router");
+  $("n-intent").classList.toggle("pulse", mode === "router" || mode === "coordinator");
+  $("n-intent").classList.toggle("skipped", mode !== "router" && mode !== "coordinator");
   $("intent-label").textContent = mode === "router" ? "classifying…"
     : mode === "coordinator" ? "planning…" : "skipped (direct)";
   $("intent-t").textContent = "";
